@@ -1,9 +1,9 @@
 #obj-m:=mycharS.o
 #obj-m+=mycharD.o
-#obj-m+=mycharPer.o
+obj-m+=mycharPer.o
 #obj-m+=mychar_udev.o
 #obj-m+=mychar_reg.o
-obj-m+=mychar_misc.o
+#obj-m+=mychar_misc.o
 
 KDIR=/lib/modules/$(shell uname -r)/build
 

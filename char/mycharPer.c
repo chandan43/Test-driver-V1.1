@@ -84,8 +84,11 @@ static int mychar_open(struct inode *inodep, struct file *filep){
 		pr_err("%s:  Device in use by another process\n",__func__);
 		return -EBUSY;
 	}
-	if(!has_capability(task,CAP_SYS_ADMIN)){
-		pr_err("%s:  Application doesn't have to permision to open \n",__func__);
+//	if(!has_capability(task,CAP_SYS_ADMIN)){
+	if(!capable(CAP_SYS_ADMIN)){
+	//if(!capable_wrt_inode_uidgid(inodep, CAP_SYS_ADMIN)){
+		pr_err("%s:  User application of this USER MODE doesn't have to permision to open device file \n",__func__);
+		mutex_unlock(&m_lock);
 		return -EPERM;
 	}
 	numberopen++;
