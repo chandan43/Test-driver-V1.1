@@ -35,6 +35,7 @@ static struct cdev *mycdev;
 struct class *charclass;
 struct device *chardevice;
 static void *kbuffer;
+static void *kbuffer1;
 static int numdev=0;
 static ssize_t size_of_msg;
 static ssize_t chardev_read(struct file *, char __user *, size_t, loff_t *);
@@ -87,6 +88,10 @@ static int __init char_dev_init(void){
 	if(!kbuffer){
 		pr_err("Kbuffer allocation failed\n");
 	}
+	kbuffer1=kmalloc(SIZE,GFP_KERNEL); //For diffrent minor number
+	if(!kbuffer){
+		pr_err("Kbuffer allocation failed\n");
+	}
 	return 0;
 
 class_destroy:
@@ -100,6 +105,7 @@ unregister:
 
 static void __exit char_dev_exit(void){
 	kfree(kbuffer);
+	kfree(kbuffer1);
 	device_destroy(charclass,MKDEV(majornumber,minornumber));
 	class_destroy(charclass);
 	cdev_del(mycdev);
@@ -119,7 +125,11 @@ static int chardev_release(struct inode *inodep, struct file *filep){
 static ssize_t chardev_read(struct file *filep, char __user *buffer, size_t size, loff_t *offset){
 	int err_count=0;
 	size_of_msg=size;
-	err_count=copy_to_user(buffer,kbuffer,size_of_msg);
+	if(iminor(filep->f_inode)==0)
+		err_count=copy_to_user(buffer,kbuffer,size_of_msg);
+	else if(iminor(filep->f_inode)==1)
+		err_count=copy_to_user(buffer,kbuffer1,size_of_msg);
+
 	if(!err_count){
 		pr_info("%s: Sent %zu characters to the user space\n",__func__,size_of_msg);
 		return size_of_msg;
@@ -130,7 +140,11 @@ static ssize_t chardev_read(struct file *filep, char __user *buffer, size_t size
 static ssize_t chardev_write(struct file *filep, const char __user *buffer, size_t size, loff_t *offset){
 	int err_count=0;
 	size_of_msg=size;
-	err_count=copy_from_user(kbuffer,buffer,size_of_msg);
+	if(iminor(filep->f_inode)==0)
+		err_count=copy_from_user(kbuffer,buffer,size_of_msg);
+	else if(iminor(filep->f_inode)==1)
+		err_count=copy_from_user(kbuffer1,buffer,size_of_msg);
+
 	if(err_count){
 		pr_err("%s: Write operation failed\n",__func__);
 		return -EFAULT;

@@ -1,0 +1,46 @@
+!_TAG_FILE_FORMAT	2	/extended format; --format=1 will not append ;" to lines/
+!_TAG_FILE_SORTED	1	/0=unsorted, 1=sorted, 2=foldcase/
+!_TAG_PROGRAM_AUTHOR	Darren Hiebert	/dhiebert@users.sourceforge.net/
+!_TAG_PROGRAM_NAME	Exuberant Ctags	//
+!_TAG_PROGRAM_URL	http://ctags.sourceforge.net	/official site/
+!_TAG_PROGRAM_VERSION	5.9~svn20110310	//
+ADDRESS_REG	rtc.h	9;"	d
+COUNT	rtc_ioctl.c	12;"	d	file:
+DATA_REG	rtc.h	10;"	d
+DAY	rtc.h	5;"	d
+DAY_IN_WEEK	rtc.h	4;"	d
+DEVICE_NAME	rtc_ioctl.c	11;"	d	file:
+HOUR	rtc.h	3;"	d
+KDIR	Makefile	/^KDIR=\/lib\/modules\/$(shell uname -r)\/build$/;"	m
+MINUTE	rtc.h	2;"	d
+MONTH	rtc.h	6;"	d
+MY_MAGIC	rtc.h	21;"	d
+Rtcmisc	rtc_ioctl.c	/^static struct miscdevice Rtcmisc ={$/;"	v	typeref:struct:miscdevice	file:
+SECOND	rtc.h	1;"	d
+SET_DAY	rtc.h	26;"	d
+SET_HOUR	rtc.h	25;"	d
+SET_MINUTE	rtc.h	24;"	d
+SET_MONTH	rtc.h	27;"	d
+SET_SECOND	rtc.h	23;"	d
+SET_YEAR	rtc.h	28;"	d
+YEAR	rtc.h	7;"	d
+day	rtc.h	/^	unsigned char day;$/;"	m	struct:rtc_time
+fops	rtc_ioctl.c	/^static const struct file_operations fops={$/;"	v	typeref:struct:file_operations	file:
+get_rtc	rtc_ioctl.c	/^static unsigned char get_rtc(unsigned char addr){$/;"	f	file:
+hour	rtc.h	/^	unsigned char hour;$/;"	m	struct:rtc_time
+m_lock	rtc_ioctl.c	/^struct mutex m_lock;$/;"	v	typeref:struct:mutex
+min	rtc.h	/^	unsigned char min;$/;"	m	struct:rtc_time
+mon	rtc.h	/^	unsigned char mon;$/;"	m	struct:rtc_time
+myrtc_exit	rtc_ioctl.c	/^module_exit(myrtc_exit);$/;"	v
+myrtc_exit	rtc_ioctl.c	/^static void __exit myrtc_exit(void){$/;"	f	file:
+myrtc_init	rtc_ioctl.c	/^module_init(myrtc_init);$/;"	v
+myrtc_init	rtc_ioctl.c	/^static int __init myrtc_init(void){$/;"	f	file:
+myrtc_ioctl	rtc_ioctl.c	/^static long myrtc_ioctl(struct file *filep, unsigned int cmd, unsigned long arg){$/;"	f	file:
+myrtc_open	rtc_ioctl.c	/^static int myrtc_open(struct inode *inodep, struct file *filep){$/;"	f	file:
+myrtc_read	rtc_ioctl.c	/^static ssize_t myrtc_read(struct file *filep, char __user *buff, size_t len, loff_t *offset){$/;"	f	file:
+myrtc_release	rtc_ioctl.c	/^static int myrtc_release(struct inode *inodep, struct file *filep){$/;"	f	file:
+numberopen	rtc_ioctl.c	/^static int numberopen=0;$/;"	v	file:
+rtc_time	rtc.h	/^struct rtc_time {$/;"	s
+sec	rtc.h	/^	unsigned char sec;$/;"	m	struct:rtc_time
+set_rtc	rtc_ioctl.c	/^static void set_rtc(unsigned char data, unsigned char addr){$/;"	f	file:
+year	rtc.h	/^	unsigned char year;$/;"	m	struct:rtc_time
