@@ -1,0 +1,1 @@
+cmd_/home/Test-driver-V1.1/char/rtc_chardrv.ko := ld -r -m elf_x86_64 -T ./scripts/module-common.lds --build-id  -o /home/Test-driver-V1.1/char/rtc_chardrv.ko /home/Test-driver-V1.1/char/rtc_chardrv.o /home/Test-driver-V1.1/char/rtc_chardrv.mod.o

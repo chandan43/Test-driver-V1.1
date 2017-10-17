@@ -1,0 +1,170 @@
+!_TAG_FILE_FORMAT	2	/extended format; --format=1 will not append ;" to lines/
+!_TAG_FILE_SORTED	1	/0=unsorted, 1=sorted, 2=foldcase/
+!_TAG_PROGRAM_AUTHOR	Darren Hiebert	/dhiebert@users.sourceforge.net/
+!_TAG_PROGRAM_NAME	Exuberant Ctags	//
+!_TAG_PROGRAM_URL	http://ctags.sourceforge.net	/official site/
+!_TAG_PROGRAM_VERSION	5.8	//
+ADDRESS_REG	rtc.h	9;"	d
+CLASS_NAME	mychar_reg.c	11;"	d	file:
+CLASS_NAME	mychar_udev.c	12;"	d	file:
+COUNT	mycharD.c	11;"	d	file:
+COUNT	mycharPer.c	13;"	d	file:
+COUNT	mycharS.c	12;"	d	file:
+COUNT	mychar_misc.c	12;"	d	file:
+COUNT	mychar_reg.c	12;"	d	file:
+COUNT	mychar_udev.c	13;"	d	file:
+COUNT	rtc_chardrv.c	12;"	d	file:
+DATA_REG	rtc.h	10;"	d
+DAY	rtc.h	5;"	d
+DAY_IN_WEEK	rtc.h	4;"	d
+DEVICE_NAME	mycharD.c	10;"	d	file:
+DEVICE_NAME	mycharPer.c	12;"	d	file:
+DEVICE_NAME	mycharS.c	11;"	d	file:
+DEVICE_NAME	mychar_misc.c	11;"	d	file:
+DEVICE_NAME	mychar_reg.c	10;"	d	file:
+DEVICE_NAME	mychar_udev.c	11;"	d	file:
+DEVICE_NAME	rtc_chardrv.c	11;"	d	file:
+DEVICE_NAME	test.c	10;"	d	file:
+HOUR	rtc.h	3;"	d
+KDIR	Makefile	/^KDIR=\/lib\/modules\/$(shell uname -r)\/build$/;"	m
+MAJORNO	mycharS.c	9;"	d	file:
+MINORNO	mycharS.c	10;"	d	file:
+MINUTE	rtc.h	2;"	d
+MONTH	rtc.h	6;"	d
+Rtcmisc	rtc_chardrv.c	/^static struct miscdevice Rtcmisc ={$/;"	v	typeref:struct:miscdevice	file:
+SECOND	rtc.h	1;"	d
+SIZE	mycharD.c	12;"	d	file:
+SIZE	mycharPer.c	14;"	d	file:
+SIZE	mycharS.c	13;"	d	file:
+SIZE	mychar_misc.c	13;"	d	file:
+SIZE	mychar_reg.c	13;"	d	file:
+SIZE	mychar_udev.c	14;"	d	file:
+SIZE	rtc_chardrv.c	13;"	d	file:
+SIZE	test.c	11;"	d	file:
+Vdevmisc	mychar_misc.c	/^static struct miscdevice Vdevmisc ={$/;"	v	typeref:struct:miscdevice	file:
+YEAR	rtc.h	7;"	d
+buffer	mycharD.c	/^static char buffer[SIZE]="NULL";$/;"	v	file:
+buffer	mycharPer.c	/^static char buffer[SIZE]="NULL";$/;"	v	file:
+buffer	mycharS.c	/^static char buffer[SIZE]="NULL";$/;"	v	file:
+buffer	mychar_misc.c	/^static char buffer[SIZE]="NULL";$/;"	v	file:
+buffer	mychar_reg.c	/^static char buffer[SIZE]="NULL";$/;"	v	file:
+buffer	mychar_udev.c	/^static char buffer[SIZE]="NULL";$/;"	v	file:
+buffer	rtc_chardrv.c	/^static char buffer[SIZE]="NULL";$/;"	v	file:
+day	rtc.h	/^	unsigned char day;$/;"	m	struct:rtc_time
+err_handler	test.c	12;"	d	file:
+fops	mycharD.c	/^static const struct file_operations fops={$/;"	v	typeref:struct:file_operations	file:
+fops	mycharPer.c	/^static const struct file_operations fops={$/;"	v	typeref:struct:file_operations	file:
+fops	mycharS.c	/^static const struct file_operations fops={$/;"	v	typeref:struct:file_operations	file:
+fops	mychar_misc.c	/^static const struct file_operations fops={$/;"	v	typeref:struct:file_operations	file:
+fops	mychar_reg.c	/^static const struct file_operations fops={$/;"	v	typeref:struct:file_operations	file:
+fops	mychar_udev.c	/^static const struct file_operations fops={$/;"	v	typeref:struct:file_operations	file:
+fops	rtc_chardrv.c	/^static const struct file_operations fops={$/;"	v	typeref:struct:file_operations	file:
+get_rtc	rtc_chardrv.c	/^static unsigned char get_rtc(unsigned char addr){$/;"	f	file:
+hour	rtc.h	/^	unsigned char hour;$/;"	m	struct:rtc_time
+m_lock	mycharD.c	/^struct mutex m_lock;$/;"	v	typeref:struct:mutex
+m_lock	mycharPer.c	/^struct mutex m_lock;$/;"	v	typeref:struct:mutex
+m_lock	mycharS.c	/^struct mutex m_lock;$/;"	v	typeref:struct:mutex
+m_lock	mychar_misc.c	/^struct mutex m_lock;$/;"	v	typeref:struct:mutex
+m_lock	mychar_reg.c	/^struct mutex m_lock;$/;"	v	typeref:struct:mutex
+m_lock	mychar_udev.c	/^struct mutex m_lock;$/;"	v	typeref:struct:mutex
+m_lock	rtc_chardrv.c	/^struct mutex m_lock;$/;"	v	typeref:struct:mutex
+main	test.c	/^int main(){$/;"	f
+majornumber	mycharD.c	/^static int  majornumber,minornumber;$/;"	v	file:
+majornumber	mycharPer.c	/^static int  majornumber,minornumber;$/;"	v	file:
+majornumber	mychar_reg.c	/^static int  majornumber,minornumber;$/;"	v	file:
+majornumber	mychar_udev.c	/^static int  majornumber,minornumber;$/;"	v	file:
+message	test.c	/^static char message[SIZE];$/;"	v	file:
+min	rtc.h	/^	unsigned char min;$/;"	m	struct:rtc_time
+minornumber	mycharD.c	/^static int  majornumber,minornumber;$/;"	v	file:
+minornumber	mycharPer.c	/^static int  majornumber,minornumber;$/;"	v	file:
+minornumber	mychar_reg.c	/^static int  majornumber,minornumber;$/;"	v	file:
+minornumber	mychar_udev.c	/^static int  majornumber,minornumber;$/;"	v	file:
+mon	rtc.h	/^	unsigned char mon;$/;"	m	struct:rtc_time
+my_cdev	mycharD.c	/^static struct cdev *my_cdev;$/;"	v	typeref:struct:cdev	file:
+my_cdev	mycharPer.c	/^static struct cdev *my_cdev;$/;"	v	typeref:struct:cdev	file:
+my_cdev	mycharS.c	/^static struct cdev *my_cdev;$/;"	v	typeref:struct:cdev	file:
+my_cdev	mychar_udev.c	/^static struct cdev *my_cdev;$/;"	v	typeref:struct:cdev	file:
+mychar_class	mychar_reg.c	/^static struct class * mychar_class;$/;"	v	typeref:struct:class	file:
+mychar_class	mychar_udev.c	/^static struct class * mychar_class;$/;"	v	typeref:struct:class	file:
+mychar_device	mychar_reg.c	/^static struct device *mychar_device;$/;"	v	typeref:struct:device	file:
+mychar_device	mychar_udev.c	/^static struct device *mychar_device;$/;"	v	typeref:struct:device	file:
+mychar_exit	mycharD.c	/^module_exit(mychar_exit);$/;"	v
+mychar_exit	mycharD.c	/^static void __exit mychar_exit(void){$/;"	f	file:
+mychar_exit	mycharPer.c	/^module_exit(mychar_exit);$/;"	v
+mychar_exit	mycharPer.c	/^static void __exit mychar_exit(void){$/;"	f	file:
+mychar_exit	mycharS.c	/^module_exit(mychar_exit);$/;"	v
+mychar_exit	mycharS.c	/^static void __exit mychar_exit(void){$/;"	f	file:
+mychar_exit	mychar_misc.c	/^module_exit(mychar_exit);$/;"	v
+mychar_exit	mychar_misc.c	/^static void __exit mychar_exit(void){$/;"	f	file:
+mychar_exit	mychar_reg.c	/^module_exit(mychar_exit);$/;"	v
+mychar_exit	mychar_reg.c	/^static void __exit mychar_exit(void){$/;"	f	file:
+mychar_exit	mychar_udev.c	/^module_exit(mychar_exit);$/;"	v
+mychar_exit	mychar_udev.c	/^static void __exit mychar_exit(void){$/;"	f	file:
+mychar_exit	rtc_chardrv.c	/^module_exit(mychar_exit);$/;"	v
+mychar_exit	rtc_chardrv.c	/^static void __exit mychar_exit(void){$/;"	f	file:
+mychar_init	mycharD.c	/^module_init(mychar_init);$/;"	v
+mychar_init	mycharD.c	/^static int __init mychar_init(void){$/;"	f	file:
+mychar_init	mycharPer.c	/^module_init(mychar_init);$/;"	v
+mychar_init	mycharPer.c	/^static int __init mychar_init(void){$/;"	f	file:
+mychar_init	mycharS.c	/^module_init(mychar_init);$/;"	v
+mychar_init	mycharS.c	/^static int __init mychar_init(void){$/;"	f	file:
+mychar_init	mychar_misc.c	/^module_init(mychar_init);$/;"	v
+mychar_init	mychar_misc.c	/^static int __init mychar_init(void){$/;"	f	file:
+mychar_init	mychar_reg.c	/^module_init(mychar_init);$/;"	v
+mychar_init	mychar_reg.c	/^static int __init mychar_init(void){$/;"	f	file:
+mychar_init	mychar_udev.c	/^module_init(mychar_init);$/;"	v
+mychar_init	mychar_udev.c	/^static int __init mychar_init(void){$/;"	f	file:
+mychar_init	rtc_chardrv.c	/^module_init(mychar_init);$/;"	v
+mychar_init	rtc_chardrv.c	/^static int __init mychar_init(void){$/;"	f	file:
+mychar_open	mycharD.c	/^static int mychar_open(struct inode *inodep, struct file *filep){$/;"	f	file:
+mychar_open	mycharPer.c	/^static int mychar_open(struct inode *inodep, struct file *filep){$/;"	f	file:
+mychar_open	mycharS.c	/^static int mychar_open(struct inode *inodep, struct file *filep){$/;"	f	file:
+mychar_open	mychar_misc.c	/^static int mychar_open(struct inode *inodep, struct file *filep){$/;"	f	file:
+mychar_open	mychar_reg.c	/^static int mychar_open(struct inode *inodep, struct file *filep){$/;"	f	file:
+mychar_open	mychar_udev.c	/^static int mychar_open(struct inode *inodep, struct file *filep){$/;"	f	file:
+mychar_read	mycharD.c	/^static ssize_t mychar_read(struct file *filep, char __user *buff, size_t len, loff_t *offset){$/;"	f	file:
+mychar_read	mycharPer.c	/^static ssize_t mychar_read(struct file *filep, char __user *buff, size_t len, loff_t *offset){$/;"	f	file:
+mychar_read	mycharS.c	/^static ssize_t mychar_read(struct file *filep, char __user *buff, size_t len, loff_t *offset){$/;"	f	file:
+mychar_read	mychar_misc.c	/^static ssize_t mychar_read(struct file *filep, char __user *buff, size_t len, loff_t *offset){$/;"	f	file:
+mychar_read	mychar_reg.c	/^static ssize_t mychar_read(struct file *filep, char __user *buff, size_t len, loff_t *offset){$/;"	f	file:
+mychar_read	mychar_udev.c	/^static ssize_t mychar_read(struct file *filep, char __user *buff, size_t len, loff_t *offset){$/;"	f	file:
+mychar_release	mycharD.c	/^static int mychar_release(struct inode *inodep, struct file *filep){$/;"	f	file:
+mychar_release	mycharPer.c	/^static int mychar_release(struct inode *inodep, struct file *filep){$/;"	f	file:
+mychar_release	mycharS.c	/^static int mychar_release(struct inode *inodep, struct file *filep){$/;"	f	file:
+mychar_release	mychar_misc.c	/^static int mychar_release(struct inode *inodep, struct file *filep){$/;"	f	file:
+mychar_release	mychar_reg.c	/^static int mychar_release(struct inode *inodep, struct file *filep){$/;"	f	file:
+mychar_release	mychar_udev.c	/^static int mychar_release(struct inode *inodep, struct file *filep){$/;"	f	file:
+mychar_write	mycharD.c	/^static ssize_t mychar_write(struct file *filep, const char __user *buff, size_t len, loff_t *offset){$/;"	f	file:
+mychar_write	mycharPer.c	/^static ssize_t mychar_write(struct file *filep, const char __user *buff, size_t len, loff_t *offset){$/;"	f	file:
+mychar_write	mycharS.c	/^static ssize_t mychar_write(struct file *filep, const char __user *buff, size_t len, loff_t *offset){$/;"	f	file:
+mychar_write	mychar_misc.c	/^static ssize_t mychar_write(struct file *filep, const char __user *buff, size_t len, loff_t *offset){$/;"	f	file:
+mychar_write	mychar_reg.c	/^static ssize_t mychar_write(struct file *filep, const char __user *buff, size_t len, loff_t *offset){$/;"	f	file:
+mychar_write	mychar_udev.c	/^static ssize_t mychar_write(struct file *filep, const char __user *buff, size_t len, loff_t *offset){$/;"	f	file:
+mydev	mycharD.c	/^static dev_t mydev;$/;"	v	file:
+mydev	mycharPer.c	/^static dev_t mydev;$/;"	v	file:
+mydev	mycharS.c	/^static dev_t mydev;$/;"	v	file:
+mydev	mychar_reg.c	/^static dev_t mydev;$/;"	v	file:
+mydev	mychar_udev.c	/^static dev_t mydev;$/;"	v	file:
+myrtc_open	rtc_chardrv.c	/^static int myrtc_open(struct inode *inodep, struct file *filep){$/;"	f	file:
+myrtc_read	rtc_chardrv.c	/^static ssize_t myrtc_read(struct file *filep, char __user *buff, size_t len, loff_t *offset){$/;"	f	file:
+myrtc_release	rtc_chardrv.c	/^static int myrtc_release(struct inode *inodep, struct file *filep){$/;"	f	file:
+myrtc_write	rtc_chardrv.c	/^static ssize_t myrtc_write(struct file *filep, const char __user *buff, size_t len, loff_t *offset){$/;"	f	file:
+numberopen	mycharD.c	/^static int numberopen=0;$/;"	v	file:
+numberopen	mycharPer.c	/^static int numberopen=0;$/;"	v	file:
+numberopen	mycharS.c	/^static int numberopen=0;$/;"	v	file:
+numberopen	mychar_misc.c	/^static int numberopen=0;$/;"	v	file:
+numberopen	mychar_reg.c	/^static int numberopen=0;$/;"	v	file:
+numberopen	mychar_udev.c	/^static int numberopen=0;$/;"	v	file:
+numberopen	rtc_chardrv.c	/^static int numberopen=0;$/;"	v	file:
+rtc_time	rtc.h	/^struct rtc_time {$/;"	s
+sec	rtc.h	/^	unsigned char sec;$/;"	m	struct:rtc_time
+set_rtc	rtc_chardrv.c	/^static void set_rtc(unsigned char data, unsigned char addr){$/;"	f	file:
+size_of_msg	mycharD.c	/^static ssize_t size_of_msg;$/;"	v	file:
+size_of_msg	mycharPer.c	/^static ssize_t size_of_msg;$/;"	v	file:
+size_of_msg	mycharS.c	/^static ssize_t size_of_msg;$/;"	v	file:
+size_of_msg	mychar_misc.c	/^static ssize_t size_of_msg;$/;"	v	file:
+size_of_msg	mychar_reg.c	/^static ssize_t size_of_msg;$/;"	v	file:
+size_of_msg	mychar_udev.c	/^static ssize_t size_of_msg;$/;"	v	file:
+size_of_msg	rtc_chardrv.c	/^static ssize_t size_of_msg;$/;"	v	file:
+task	mycharPer.c	/^struct task_struct *task;$/;"	v	typeref:struct:task_struct
+yaer	rtc.h	/^	unsigned char yaer;$/;"	m	struct:rtc_time
