@@ -10,6 +10,9 @@
 #define MONTH_CMD 8
 #define YEAR_CMD 9
 
-#define 
+/* cmd is SECONDS_CMD .... YEARS_CMD... */
+#define READ_FROM_CLOCK(cmd,data) outb_p(cmd,RTC_ADDRESS_BASE);data=inb_p(RTC_DATA_BASE);
 
+/* cmd is SECONDS_CMD .... YEARS_CMD... and value is the value to be set */
+#define WRITE_TO_CLOCK(cmd,value) outb_p(cmd,RTC_ADDRESS_BASE);outb_p(value,RTC_DATA_BASE);
 
