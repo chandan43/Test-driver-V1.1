@@ -25,8 +25,9 @@
 #include "charioctl.h"
 
 #define CLASS_NAME "VIRTUAL"
-#define COUNT 2
-#define SIZE 1024
+#define COUNT 1
+
+static int SIZE=1024;
 
 static int minornumber=0;
 static int majornumber;
@@ -140,8 +141,6 @@ static ssize_t chardev_write(struct file *filep, const char __user *buffer, size
 }
 static long chardev_ioctl(struct file *filep, unsigned int cmd, unsigned long arg){
 	unsigned char data;
-	unsigned int size;
-	int ret;
 	if(_IOC_TYPE(cmd) != CHAR_MAGIC)
 		return -ENOTTY;
 	switch(cmd){
@@ -155,17 +154,12 @@ static long chardev_ioctl(struct file *filep, unsigned int cmd, unsigned long ar
 			pr_info("%s: KBUFF data : %s\n",__func__,(char *)kbuffer);
 			break;
 		case GETSIZE:
-			size=SIZE;
-			pr_info("SIZE=%d\n",(uint *)size);
-			ret=copy_to_user((uint *)arg,&size,sizeof(uint));
-			//ret=put_user(1,(uint *)arg);
-			if(ret)
-				pr_err("err in copy %d\n",ret);
+			return (SIZE);
 			break;
 		case SETSIZE:
-			size=arg;
-			kbuffer=krealloc(kbuffer,size,GFP_KERNEL);
-			pr_info("New Resized KBuffer SIZE is %d",size);
+			SIZE=arg;
+			kbuffer=krealloc(kbuffer,SIZE,GFP_KERNEL);
+			pr_info("New Resized KBuffer SIZE is %d",SIZE);
 			break;
 	}
 	return 0;

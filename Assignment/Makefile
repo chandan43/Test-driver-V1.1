@@ -1,7 +1,7 @@
 #obj-m:=char_dev.o
 #obj-m+=chardev_minor.o
-#obj-m+=charioctl.o
-obj-m+=chardrv_ioctl.o
+obj-m+=charioctl.o
+#obj-m+=chardrv_ioctl.o
 
 KDIR=/lib/modules/$(shell uname -r)/build
 
