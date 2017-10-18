@@ -1,6 +1,7 @@
 #obj-m:=char_dev.o
 #obj-m+=chardev_minor.o
-obj-m+=charioctl.o
+#obj-m+=charioctl.o
+obj-m+=chardrv_ioctl.o
 
 KDIR=/lib/modules/$(shell uname -r)/build
 
@@ -11,6 +12,8 @@ all:
 	$(CC) Test_write1.c -o testw1
 	$(CC) Test_read1.c -o testr1
 	$(CC) charioctl_test.c -o charioctl
+	$(CC) Testr_ioctl.c -o ioctlr
+	$(CC) Testw_ioctl.c -o ioctlw
 clean:
 	$(MAKE) -C $(KDIR) M=$(PWD) clean
-	rm -rf testw testr testw1 testr1 charioctl
+	rm -rf testw testr testw1 testr1 charioctl ioctlr ioctlw 
