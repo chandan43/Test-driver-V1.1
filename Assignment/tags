@@ -1,0 +1,98 @@
+!_TAG_FILE_FORMAT	2	/extended format; --format=1 will not append ;" to lines/
+!_TAG_FILE_SORTED	1	/0=unsorted, 1=sorted, 2=foldcase/
+!_TAG_PROGRAM_AUTHOR	Darren Hiebert	/dhiebert@users.sourceforge.net/
+!_TAG_PROGRAM_NAME	Exuberant Ctags	//
+!_TAG_PROGRAM_URL	http://ctags.sourceforge.net	/official site/
+!_TAG_PROGRAM_VERSION	5.8	//
+CHAR_MAGIC	charioctl.h	2;"	d
+CLASS_NAME	char_dev.c	27;"	d	file:
+CLASS_NAME	chardev_minor.c	27;"	d	file:
+CLASS_NAME	charioctl.c	27;"	d	file:
+COUNT	char_dev.c	28;"	d	file:
+COUNT	chardev_minor.c	28;"	d	file:
+COUNT	charioctl.c	28;"	d	file:
+DEVICE_NAME	Test_read.c	11;"	d	file:
+DEVICE_NAME	Test_read1.c	11;"	d	file:
+DEVICE_NAME	Test_write.c	11;"	d	file:
+DEVICE_NAME	Test_write1.c	11;"	d	file:
+DRIVE_NAME	char_dev.c	26;"	d	file:
+DRIVE_NAME	chardev_minor.c	26;"	d	file:
+DRIVE_NAME	charioctl.h	8;"	d
+FILLCHAR	charioctl.h	4;"	d
+FILLZERO	charioctl.h	3;"	d
+GETSIZE	charioctl.h	5;"	d
+KDIR	Makefile	/^KDIR=\/lib\/modules\/$(shell uname -r)\/build$/;"	m
+SETSIZE	charioctl.h	6;"	d
+SIZE	Test_read.c	12;"	d	file:
+SIZE	Test_read1.c	12;"	d	file:
+SIZE	Test_write.c	12;"	d	file:
+SIZE	Test_write1.c	12;"	d	file:
+SIZE	char_dev.c	29;"	d	file:
+SIZE	chardev_minor.c	29;"	d	file:
+SIZE	charioctl.c	29;"	d	file:
+char_dev_exit	char_dev.c	/^module_exit(char_dev_exit);$/;"	v
+char_dev_exit	char_dev.c	/^static void __exit char_dev_exit(void){$/;"	f	file:
+char_dev_exit	chardev_minor.c	/^module_exit(char_dev_exit);$/;"	v
+char_dev_exit	chardev_minor.c	/^static void __exit char_dev_exit(void){$/;"	f	file:
+char_dev_exit	charioctl.c	/^module_exit(char_dev_exit);$/;"	v
+char_dev_exit	charioctl.c	/^static void __exit char_dev_exit(void){$/;"	f	file:
+char_dev_init	char_dev.c	/^module_init(char_dev_init);$/;"	v
+char_dev_init	char_dev.c	/^static int __init char_dev_init(void){$/;"	f	file:
+char_dev_init	chardev_minor.c	/^module_init(char_dev_init);$/;"	v
+char_dev_init	chardev_minor.c	/^static int __init char_dev_init(void){$/;"	f	file:
+char_dev_init	charioctl.c	/^module_init(char_dev_init);$/;"	v
+char_dev_init	charioctl.c	/^static int __init char_dev_init(void){$/;"	f	file:
+charclass	char_dev.c	/^struct class *charclass;$/;"	v	typeref:struct:class
+charclass	chardev_minor.c	/^struct class *charclass;$/;"	v	typeref:struct:class
+charclass	charioctl.c	/^struct class *charclass;$/;"	v	typeref:struct:class
+chardev_ioctl	charioctl.c	/^static long chardev_ioctl(struct file *filep, unsigned int cmd, unsigned long arg){$/;"	f	file:
+chardev_open	char_dev.c	/^static int chardev_open(struct inode *inodep, struct file *filep){$/;"	f	file:
+chardev_open	chardev_minor.c	/^static int chardev_open(struct inode *inodep, struct file *filep){$/;"	f	file:
+chardev_open	charioctl.c	/^static int chardev_open(struct inode *inodep, struct file *filep){$/;"	f	file:
+chardev_read	char_dev.c	/^static ssize_t chardev_read(struct file *filep, char __user *buffer, size_t size, loff_t *offset){$/;"	f	file:
+chardev_read	chardev_minor.c	/^static ssize_t chardev_read(struct file *filep, char __user *buffer, size_t size, loff_t *offset){$/;"	f	file:
+chardev_read	charioctl.c	/^static ssize_t chardev_read(struct file *filep, char __user *buffer, size_t size, loff_t *offset){$/;"	f	file:
+chardev_release	char_dev.c	/^static int chardev_release(struct inode *inodep, struct file *filep){$/;"	f	file:
+chardev_release	chardev_minor.c	/^static int chardev_release(struct inode *inodep, struct file *filep){$/;"	f	file:
+chardev_release	charioctl.c	/^static int chardev_release(struct inode *inodep, struct file *filep){$/;"	f	file:
+chardev_write	char_dev.c	/^static ssize_t chardev_write(struct file *filep, const char __user *buffer, size_t size, loff_t *offset){$/;"	f	file:
+chardev_write	chardev_minor.c	/^static ssize_t chardev_write(struct file *filep, const char __user *buffer, size_t size, loff_t *offset){$/;"	f	file:
+chardev_write	charioctl.c	/^static ssize_t chardev_write(struct file *filep, const char __user *buffer, size_t size, loff_t *offset){$/;"	f	file:
+chardevice	char_dev.c	/^struct device *chardevice;$/;"	v	typeref:struct:device
+chardevice	chardev_minor.c	/^struct device *chardevice;$/;"	v	typeref:struct:device
+chardevice	charioctl.c	/^struct device *chardevice;$/;"	v	typeref:struct:device
+err_handelr	Test_read.c	10;"	d	file:
+err_handelr	Test_read1.c	10;"	d	file:
+err_handelr	Test_write.c	10;"	d	file:
+err_handelr	Test_write1.c	10;"	d	file:
+fops	char_dev.c	/^static struct file_operations fops ={$/;"	v	typeref:struct:file_operations	file:
+fops	chardev_minor.c	/^static struct file_operations fops ={$/;"	v	typeref:struct:file_operations	file:
+fops	charioctl.c	/^static struct file_operations fops ={$/;"	v	typeref:struct:file_operations	file:
+kbuffer	char_dev.c	/^static void *kbuffer;$/;"	v	file:
+kbuffer	chardev_minor.c	/^static void *kbuffer;$/;"	v	file:
+kbuffer	charioctl.c	/^static void *kbuffer;$/;"	v	file:
+kbuffer1	chardev_minor.c	/^static void *kbuffer1;$/;"	v	file:
+main	Test_read.c	/^int main(){$/;"	f
+main	Test_read1.c	/^int main(){$/;"	f
+main	Test_write.c	/^int main(){$/;"	f
+main	Test_write1.c	/^int main(){$/;"	f
+majornumber	char_dev.c	/^static int majornumber;$/;"	v	file:
+majornumber	chardev_minor.c	/^static int majornumber;$/;"	v	file:
+majornumber	charioctl.c	/^static int majornumber;$/;"	v	file:
+message	Test_read.c	/^static char message[SIZE];$/;"	v	file:
+message	Test_read1.c	/^static char message[SIZE];$/;"	v	file:
+minornumber	char_dev.c	/^static int minornumber=0;$/;"	v	file:
+minornumber	chardev_minor.c	/^static int minornumber=0;$/;"	v	file:
+minornumber	charioctl.c	/^static int minornumber=0;$/;"	v	file:
+mycdev	char_dev.c	/^static struct cdev *mycdev;$/;"	v	typeref:struct:cdev	file:
+mycdev	chardev_minor.c	/^static struct cdev *mycdev;$/;"	v	typeref:struct:cdev	file:
+mycdev	charioctl.c	/^static struct cdev *mycdev;$/;"	v	typeref:struct:cdev	file:
+mydev	char_dev.c	/^static dev_t mydev;$/;"	v	file:
+mydev	chardev_minor.c	/^static dev_t mydev;$/;"	v	file:
+mydev	charioctl.c	/^static dev_t mydev;$/;"	v	file:
+numdev	char_dev.c	/^static int numdev=0;$/;"	v	file:
+numdev	chardev_minor.c	/^static int numdev=0;$/;"	v	file:
+numdev	charioctl.c	/^static int numdev=0;$/;"	v	file:
+size_of_msg	char_dev.c	/^static ssize_t size_of_msg;$/;"	v	file:
+size_of_msg	chardev_minor.c	/^static ssize_t size_of_msg;$/;"	v	file:
+size_of_msg	charioctl.c	/^static ssize_t size_of_msg;$/;"	v	file:

@@ -22,8 +22,8 @@
 #include <linux/slab.h>
 #include <linux/cdev.h>
 #include <asm/uaccess.h>
+#include "charioctl.h"
 
-#define DRIVE_NAME "char_dev"
 #define CLASS_NAME "VIRTUAL"
 #define COUNT 2
 #define SIZE 1024
@@ -41,14 +41,16 @@ static ssize_t chardev_read(struct file *, char __user *, size_t, loff_t *);
 static ssize_t chardev_write(struct file *, const char __user *, size_t, loff_t *);
 static int chardev_open(struct inode *, struct file *);
 static int chardev_release(struct inode *, struct file *);
+static long chardev_ioctl(struct file *, unsigned int, unsigned long);
 
 
 static struct file_operations fops ={
-	.owner   = THIS_MODULE,
-	.open    = chardev_open,
-	.release = chardev_release,
-	.read    = chardev_read,
-	.write   = chardev_write,
+	.owner   	= THIS_MODULE,
+	.open    	= chardev_open,
+	.release 	= chardev_release,
+	.read    	= chardev_read,
+	.write   	= chardev_write,
+	.unlocked_ioctl	= chardev_ioctl,
 };
 
 
@@ -87,7 +89,6 @@ static int __init char_dev_init(void){
 	if(!kbuffer){
 		pr_err("Kbuffer allocation failed\n");
 	}
-//	kbuffer=krealloc(kbuffer,2048,GFP_KERNEL);
 	return 0;
 class_destroy:
 	class_destroy(charclass);
@@ -137,12 +138,44 @@ static ssize_t chardev_write(struct file *filep, const char __user *buffer, size
 	pr_info("%s: Received %zu characters from the user space\n",__func__,size_of_msg);
 	return size_of_msg;
 }
+static long chardev_ioctl(struct file *filep, unsigned int cmd, unsigned long arg){
+	unsigned char data;
+	unsigned int size;
+	int ret;
+	if(_IOC_TYPE(cmd) != CHAR_MAGIC)
+		return -ENOTTY;
+	switch(cmd){
+		case FILLZERO:
+			memset(kbuffer,'0',SIZE);
+			pr_info("%s: KBUFF data Filled with Zero : %s\n",__func__,(char *)kbuffer);
+			break;
+		case FILLCHAR:
+			data=arg;
+			memset(kbuffer,data,SIZE);
+			pr_info("%s: KBUFF data : %s\n",__func__,(char *)kbuffer);
+			break;
+		case GETSIZE:
+			size=SIZE;
+			pr_info("SIZE=%d\n",(uint *)size);
+			ret=copy_to_user((uint *)arg,&size,sizeof(uint));
+			//ret=put_user(1,(uint *)arg);
+			if(ret)
+				pr_err("err in copy %d\n",ret);
+			break;
+		case SETSIZE:
+			size=arg;
+			kbuffer=krealloc(kbuffer,size,GFP_KERNEL);
+			pr_info("New Resized KBuffer SIZE is %d",size);
+			break;
+	}
+	return 0;
+}
 
 module_init(char_dev_init);
 module_exit(char_dev_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("beingchandanjha@gmail.com");
-MODULE_DESCRIPTION("Char Driver");
+MODULE_DESCRIPTION("Char Driver with some IOCTL operation");
 MODULE_VERSION(".1");
 
