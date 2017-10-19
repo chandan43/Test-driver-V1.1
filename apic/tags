@@ -1,0 +1,35 @@
+!_TAG_FILE_FORMAT	2	/extended format; --format=1 will not append ;" to lines/
+!_TAG_FILE_SORTED	1	/0=unsorted, 1=sorted, 2=foldcase/
+!_TAG_PROGRAM_AUTHOR	Darren Hiebert	/dhiebert@users.sourceforge.net/
+!_TAG_PROGRAM_NAME	Exuberant Ctags	//
+!_TAG_PROGRAM_URL	http://ctags.sourceforge.net	/official site/
+!_TAG_PROGRAM_VERSION	5.9~svn20110310	//
+APICMISC	apic_ioctl.c	/^static struct miscdevice APICMISC ={$/;"	v	typeref:struct:miscdevice	file:
+APIC_GETID	apic.h	2;"	d
+APIC_GETIRQ	apic.h	3;"	d
+APIC_GETIRQSTATUS	apic.h	4;"	d
+APIC_GETIRQTYPE	apic.h	5;"	d
+APIC_MAGIC	apic.h	1;"	d
+DEVICE_NAME	apic.h	7;"	d
+Device_path	apictest.c	11;"	d	file:
+IOAPIC_BASE	apic.h	8;"	d
+KDIR	Makefile	/^KDIR=\/lib\/modules\/$(shell uname -r)\/build$/;"	m
+SIZE	apictest.c	13;"	d	file:
+err_handler	apictest.c	12;"	d	file:
+fops	apic_ioctl.c	/^static const struct file_operations fops={$/;"	v	typeref:struct:file_operations	file:
+ident	apic_ioctl.c	/^int ident,maxirq;$/;"	v
+io	apic_ioctl.c	/^void *io,*ioregsel,*iowin;$/;"	v
+ioregsel	apic_ioctl.c	/^void *io,*ioregsel,*iowin;$/;"	v
+iowin	apic_ioctl.c	/^void *io,*ioregsel,*iowin;$/;"	v
+m_lock	apic_ioctl.c	/^struct mutex m_lock;$/;"	v	typeref:struct:mutex
+main	apictest.c	/^int main(){$/;"	f
+maxirq	apic_ioctl.c	/^int ident,maxirq;$/;"	v
+myapic_exit	apic_ioctl.c	/^module_exit(myapic_exit);$/;"	v
+myapic_exit	apic_ioctl.c	/^static void __exit myapic_exit(void){$/;"	f	file:
+myapic_init	apic_ioctl.c	/^module_init(myapic_init);$/;"	v
+myapic_init	apic_ioctl.c	/^static int __init myapic_init(void){$/;"	f	file:
+myapic_ioctl	apic_ioctl.c	/^static long myapic_ioctl(struct file *filep, unsigned int cmd, unsigned long arg){$/;"	f	file:
+myapic_open	apic_ioctl.c	/^static int myapic_open(struct inode *inodep, struct file *filep){$/;"	f	file:
+myapic_release	apic_ioctl.c	/^static int myapic_release(struct inode *inodep, struct file *filep){$/;"	f	file:
+numberopen	apic_ioctl.c	/^static int numberopen=0;$/;"	v	file:
+obj-m	Makefile	/^obj-m:=apic_ioctl.o$/;"	m

@@ -6,7 +6,8 @@
 #include <linux/capability.h>
 #include <linux/sched.h>
 #include <linux/mutex.h>
-#include <asm/uaccess.h> 
+#include <asm/uaccess.h>
+#include <asm/current.h>
 /*/lib/modules/4.10.0-37-generic/build/arch/x86/include/asm*/
 
 #define DEVICE_NAME "mychar"
@@ -15,7 +16,7 @@
 
 struct mutex m_lock;
 //static DEFINE_MUTEX(m_lock);
-struct task_struct *task;
+
 
 static dev_t mydev;
 static struct cdev *my_cdev;
@@ -80,10 +81,13 @@ static int mychar_open(struct inode *inodep, struct file *filep){
  *
  * Returns 1 if the mutex has been acquired successfully, and 0 on contention.
  */
+	struct task_struct *tsk=current; // get address of task_struct using current macro;
 	if(!mutex_trylock(&m_lock)){
 		pr_err("%s:  Device in use by another process\n",__func__);
 		return -EBUSY;
 	}
+	pr_info("Caller Process Name %s\n", current->comm);
+	pr_info("Flag: %08X",tsk->flags);
 //	if(!has_capability(task,CAP_SYS_ADMIN)){
 	if(!capable(CAP_SYS_ADMIN)){
 	//if(!capable_wrt_inode_uidgid(inodep, CAP_SYS_ADMIN)){

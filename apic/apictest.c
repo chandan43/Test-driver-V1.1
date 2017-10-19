@@ -13,7 +13,7 @@
 #define SIZE 1
 int main(){
 	int fd,ret,ch,i;
-	int ID[SIZE],IRQ[SIZE];
+	int ID[SIZE],IRQ[SIZE],irqstatus,irqtype;
 	fd=open(Device_path,O_RDWR);
 	if(fd<0)
 		err_handler(fd,"open");
@@ -22,7 +22,9 @@ int main(){
 		printf("-------------------\n");
 		printf("1.APIC_GETID\n");
 		printf("2.APIC_GETIRQ\n");
-		printf("3.EXIT\n");
+		printf("3.APIC_GETIRQSTATUS\n");
+		printf("4.APIC_GETIRQTYPE\n");
+		printf("5.EXIT\n");
 		printf("-------------------\n");
 		scanf("%d",&ch);
 		switch(ch){
@@ -47,6 +49,24 @@ int main(){
 				printf("\n");
 				break;
 			case 3: 
+				printf("Enter the irq no[0 to 23] for IRQSTATUS\n");
+				scanf("%d",&irqstatus);
+				ret=ioctl(fd,APIC_GETIRQSTATUS,irqstatus);
+				if(ret<0)
+					err_handler(fd,"ioctl");
+				if(ret)
+					printf("Enabled\n");
+				else
+				 	printf("Disabled\n");
+				break;
+			case 4:
+				printf("Enter the irq no[0 to 23] for IRQTYPE\n");
+				scanf("%d",&irqtype);
+				ret=ioctl(fd,APIC_GETIRQTYPE,irqtype);
+				if(ret<0)
+					err_handler(fd,"ioctl");
+				break;
+			case 5: 
 				exit(1);
 				
 		}

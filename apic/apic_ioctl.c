@@ -13,6 +13,16 @@ struct mutex m_lock;
 void *io,*ioregsel,*iowin;
 int ident,maxirq;
 
+int ioredtlb[] = { 0x10, 0x11, 0x12, 0x13, 0x14, 0x15,
+		   0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B,
+		   0x1C, 0x1D, 0x1E, 0x1F, 0x20, 0x21,
+		   0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
+		   0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D,
+		   0x2E, 0x2F, 0x30, 0x31, 0x32, 0x33,
+		   0x34, 0x35, 0x36, 0x37, 0x38, 0x39,
+		   0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F
+};
+
 
 static int myapic_open(struct inode *, struct file *);
 static int myapic_release(struct inode *, struct file *);
@@ -116,7 +126,7 @@ static int myapic_open(struct inode *inodep, struct file *filep){
    			version.
  */
 static long myapic_ioctl(struct file *filep, unsigned int cmd, unsigned long arg){
-	
+	int val;
 	if(_IOC_TYPE(cmd)!=APIC_MAGIC)
 		return -ENOTTY;
 	 if(_IOC_DIR(cmd) & _IOC_READ)
@@ -141,6 +151,20 @@ static long myapic_ioctl(struct file *filep, unsigned int cmd, unsigned long arg
 			maxirq = maxirq + 1;
 			copy_to_user((int *)arg,&maxirq,sizeof(maxirq));
 			pr_info("IRQ INFO : %d\n",maxirq);
+			break;
+		case APIC_GETIRQSTATUS:
+			iowrite32(ioredtlb[arg], ioregsel);
+			val = ioread32(iowin);
+			pr_info("Redirection-Table entries of IRQ %d: %016X\n",(int)arg,val);
+			val=((val & 0x1000) >13);
+			return (val);
+			break;
+		case APIC_GETIRQTYPE:
+			iowrite32(ioredtlb[arg], ioregsel);
+			val = ioread32(iowin);
+			pr_info("Redirection-Table entries of IRQ %d: %016X\n",(int)arg,val);
+			val=((val & 0x0700));
+			pr_info("val=%016X\n",val);
 			break;
 	}
 	return 0;
