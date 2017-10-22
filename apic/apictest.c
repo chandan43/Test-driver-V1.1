@@ -63,8 +63,25 @@ int main(){
 				printf("Enter the irq no[0 to 23] for IRQTYPE\n");
 				scanf("%d",&irqtype);
 				ret=ioctl(fd,APIC_GETIRQTYPE,irqtype);
+				ret=ioctl(fd,APIC_GETIRQTYPE,i);
 				if(ret<0)
 					err_handler(fd,"ioctl");
+				if(ret==0)
+					printf("Signal type is : Fixed\n");
+				else if(ret==1)
+					printf("Signal type is : Lowest Priority\n");
+				else if(ret==2)
+					printf("Signal type is : SMI\n");
+				else if(ret==3)
+					printf("Signal type is : Reserved\n");
+				else if(ret==4)
+					printf("Signal type is : NMI\n");
+				else if(ret==5)
+					printf("Signal type is : INIT\n");
+				else if(ret==6)
+					printf("Signal type is : Reserved\n");
+				else if(ret==7)
+					printf("Signal type is : ExtINT\n");
 				break;
 			case 5: 
 				exit(1);

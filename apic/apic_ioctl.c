@@ -126,7 +126,7 @@ static int myapic_open(struct inode *inodep, struct file *filep){
    			version.
  */
 static long myapic_ioctl(struct file *filep, unsigned int cmd, unsigned long arg){
-	int val;
+	int val_lo,val_hi,ret;
 	if(_IOC_TYPE(cmd)!=APIC_MAGIC)
 		return -ENOTTY;
 	 if(_IOC_DIR(cmd) & _IOC_READ)
@@ -140,7 +140,9 @@ static long myapic_ioctl(struct file *filep, unsigned int cmd, unsigned long arg
 		case APIC_GETID:
 			iowrite32(0,ioregsel);
 			ident=ioread32(iowin);
-			copy_to_user((int *)arg,&ident,sizeof(ident));
+			ret=copy_to_user((int *)arg,&ident,sizeof(ident));
+			if(ret)
+				pr_info("Copt to user Failed: %d",ret);
 			pr_info("Identification: %08X\n",ident);
 			break;
 		case APIC_GETIRQ:
@@ -149,22 +151,28 @@ static long myapic_ioctl(struct file *filep, unsigned int cmd, unsigned long arg
 			/* mask rest and access bit 16-23 */
 			maxirq= (maxirq >> 16) & 0x00FF;
 			maxirq = maxirq + 1;
-			copy_to_user((int *)arg,&maxirq,sizeof(maxirq));
+			ret=copy_to_user((int *)arg,&maxirq,sizeof(maxirq));
+			if(ret)
+				pr_info("Copt to user Failed: %d",ret);
 			pr_info("IRQ INFO : %d\n",maxirq);
 			break;
 		case APIC_GETIRQSTATUS:
-			iowrite32(ioredtlb[arg], ioregsel);
-			val = ioread32(iowin);
-			pr_info("Redirection-Table entries of IRQ %d: %016X\n",(int)arg,val);
-			val=((val & 0x1000) >13);
-			return (val);
+			iowrite32(ioredtlb[arg*2], ioregsel);
+			val_lo = ioread32(iowin);
+			iowrite32(ioredtlb[arg*2+1], ioregsel);
+			val_hi = ioread32(iowin);
+			pr_info("Redirection-Table entries of IRQ %d: %08X%08X\n",(int)arg,val_hi,val_lo);
+			val_lo=((val_lo & 0x1000)>>12);
+			return (val_lo);
 			break;
 		case APIC_GETIRQTYPE:
-			iowrite32(ioredtlb[arg], ioregsel);
-			val = ioread32(iowin);
-			pr_info("Redirection-Table entries of IRQ %d: %016X\n",(int)arg,val);
-			val=((val & 0x0700));
-			pr_info("val=%016X\n",val);
+			iowrite32(ioredtlb[arg*2], ioregsel);
+			val_lo = ioread32(iowin);
+			iowrite32(ioredtlb[arg*2+1], ioregsel);
+			val_hi = ioread32(iowin);
+			pr_info("Redirection-Table entries of IRQ %d: %08X%08X\n",(int)arg,val_hi,val_lo);
+			val_lo=((val_lo & 0x0700) >>8);
+			return (val_lo);
 			break;
 	}
 	return 0;
