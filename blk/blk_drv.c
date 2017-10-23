@@ -56,7 +56,6 @@ static void blkdrv_transfer(Dev *dev,sector_t sector,unsigned long nsector,char 
  */
 static void blkdrv_req(struct request_queue *q){
 	struct request *req;
-	dev->gd->first_minor=0;
 	req=blk_fetch_request(q);
 	while(req!=NULL){
 		if(req==NULL && req->cmd_type!=REQ_TYPE_FS){
@@ -65,7 +64,7 @@ static void blkdrv_req(struct request_queue *q){
 			continue;
 		}
 		blkdrv_transfer(dev,blk_rq_pos(req),blk_rq_cur_sectors(req),req->buffer,rq_data_dir(req));
-		if(!blk_end_request_cur(req,0)){
+		if(!__blk_end_request_cur(req,0)){
 			req=blk_fetch_request(q);
 		}
 	}
@@ -98,10 +97,11 @@ static const struct block_device_operations blkdrv_fops = {
 	.release = blkdrv_release,
 };
 
-static int __init blkdrv_init(void){
+static int blkdrv_init(void){
 	pr_info("%s: Initialization of Block device driver\n",__func__);
 	dev=kmalloc(sizeof(struct blk_dev),GFP_KERNEL);
 	dev->size=logical_block_size*nsector;
+	pr_info("size =%d ,cyl=geo->cylinders %d\n",dev->size,((dev->size & ~(0x3f))>>6));
 	spin_lock_init(&dev->lock);
 	dev->data=vmalloc(dev->size);
 	if(!dev->data){
@@ -127,10 +127,12 @@ static int __init blkdrv_init(void){
 	}
 	dev->gd->major=majornumber;
 	dev->gd->first_minor=0;
+	dev->gd->minors=2;
 	dev->gd->fops=&blkdrv_fops;
 	dev->gd->private_data=&dev;
-	strcpy(dev->gd->disk_name,"sbd%d");
+	strcpy(dev->gd->disk_name,"sbd0");
 	set_capacity(dev->gd,nsector);
+	dev->gd->queue=dev->Queue;
 	add_disk(dev->gd);
 	return 0;
 unregister:
@@ -142,6 +144,12 @@ free:
 }
 
 static void __exit blkdrv_exit(void){
+	del_gendisk(dev->gd);
+	put_disk(dev->gd);
+	unregister_blkdev(majornumber,DEVICE_NAME);
+	blk_cleanup_queue(dev->Queue);
+	vfree(dev->data);
+	kfree(dev);
 	pr_info("%s: Exited Successfully\n",__func__);
 }
 
