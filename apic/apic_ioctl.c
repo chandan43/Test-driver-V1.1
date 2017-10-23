@@ -1,3 +1,15 @@
+/*ex 5: Implement char driver that supports open, release, and ioctl operations 
+      on Advanced Programmable Interrupt Controller(IOAPIC).
+
+      Implement ioctl Operations for the following
+
+	1. APIC_GETID  		: returns identification no of Apic
+	2. APIC_GETIRQS		: returns no of irq pins on APIC 
+	3. APIC_GETIRQSTATUS	: returns irq pin status (enabled, disabled)
+	4: APIC_GETIRQTYPE	: returns irq pin signal type
+
+      write a test application to initiate and verify above commands.
+*/
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/kernel.h>

@@ -1,19 +1,19 @@
-/* Allocate 1024 bytes of kernel buffer and implement a char driver to
- * provide read/write operation on the buffer. Write a test application 
- * to test read/write.*/
- 
-/* Note: Use Copy_to/Copy_from kernel helper routines to transfer data 
- * to/from driver buffer to application. */
+/* 
+ex2: Allocate 2 kernel buffers of 1024 bytes each(DEVBUFA, DEVBUFB)implement a 
+     char driver  that maps DEVBUFA to /dev/bufa  and DEVBUFB to /dev/bufb. 
+     Driver should provide support for read/write operations.
 
-/* STEPS :
- * 1. Write a kernel Module that register a new char driver.
- * 2. Implement open/release/read/write operation in char driver.
- * 3. Allocate 1024 bytes of buffer for driver use 
- * 4. Use copy_from_user/copy_to_user in read and write calls of driver 
- * 5. Write an application to write 100 bytes of data in driver buffer.
- * 6. Write an application that reads 100 bytes of data from driver buffer.
- */
- 
+Note: Register char driver using dynamic major no's
+
+Task Breakup: 
+  
+       1. allocate buffer blocks DEVBUFA, and DEVBUFB
+       2. register char driver with dynamic major no and 2 minor no's
+       3. Implement read and write functions to print minor no associated with 
+          request path into dmesg buffer.
+       4. Extend driver's read/write routines to transfer data b/w appropriate device 
+          buffer an application as per minor no in the request path. 
+*/
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
