@@ -1,0 +1,56 @@
+!_TAG_FILE_FORMAT	2	/extended format; --format=1 will not append ;" to lines/
+!_TAG_FILE_SORTED	1	/0=unsorted, 1=sorted, 2=foldcase/
+!_TAG_PROGRAM_AUTHOR	Darren Hiebert	/dhiebert@users.sourceforge.net/
+!_TAG_PROGRAM_NAME	Exuberant Ctags	//
+!_TAG_PROGRAM_URL	http://ctags.sourceforge.net	/official site/
+!_TAG_PROGRAM_VERSION	5.9~svn20110310	//
+ADDRESS_REG	rtc.h	9;"	d
+DATA_REG	rtc.h	10;"	d
+DAY	rtc.h	5;"	d
+DAY_IN_WEEK	rtc.h	4;"	d
+HOUR	rtc.h	3;"	d
+KDIR	Makefile	/^KDIR=\/lib\/modules\/$(shell uname -r)\/build$/;"	m
+KOBJ_NAME	rtc_sysfs.c	9;"	d	file:
+KOBJ_NAME	sysfs_skel.c	9;"	d	file:
+MINUTE	rtc.h	2;"	d
+MONTH	rtc.h	6;"	d
+SECOND	rtc.h	1;"	d
+YEAR	rtc.h	7;"	d
+attr_grp	rtc_sysfs.c	/^static struct attribute_group attr_grp={$/;"	v	typeref:struct:attribute_group	file:
+attr_grp	sysfs_skel.c	/^static struct attribute_group attr_grp={$/;"	v	typeref:struct:attribute_group	file:
+date_attr	rtc_sysfs.c	/^static struct kobj_attribute date_attr=__ATTR(date,0666,date_show,date_store);$/;"	v	typeref:struct:kobj_attribute	file:
+date_attr	sysfs_skel.c	/^static struct kobj_attribute date_attr=__ATTR(date,0666,date_show,date_store);$/;"	v	typeref:struct:kobj_attribute	file:
+date_show	rtc_sysfs.c	/^static ssize_t date_show(struct kobject *kobj, struct attribute *attr, char *buff){$/;"	f	file:
+date_show	sysfs_skel.c	/^static ssize_t date_show(struct kobject *kobj, struct attribute *attr, char *buff){$/;"	f	file:
+date_store	rtc_sysfs.c	/^static ssize_t date_store(struct kobject *kobj, struct attribute *attr, const char *buff, size_t count){$/;"	f	file:
+date_store	sysfs_skel.c	/^static ssize_t date_store(struct kobject *kobj, struct attribute *attr, const char *buff, size_t count){$/;"	f	file:
+day	rtc.h	/^	unsigned char day;$/;"	m	struct:rtc_time
+get_rtc	rtc_sysfs.c	/^static unsigned char get_rtc(unsigned char addr){$/;"	f	file:
+get_rtc	sysfs_skel.c	/^static unsigned char get_rtc(unsigned char addr){$/;"	f	file:
+hour	rtc.h	/^	unsigned char hour;$/;"	m	struct:rtc_time
+min	rtc.h	/^	unsigned char min;$/;"	m	struct:rtc_time
+mon	rtc.h	/^	unsigned char mon;$/;"	m	struct:rtc_time
+my_rtc	rtc_sysfs.c	/^static struct kobject *my_rtc;$/;"	v	typeref:struct:kobject	file:
+my_rtc	sysfs_skel.c	/^static struct kobject *my_rtc;$/;"	v	typeref:struct:kobject	file:
+obj-m	Makefile	/^obj-m:=rtc_sysfs.o$/;"	m
+rtc_attrs	rtc_sysfs.c	/^static struct attribute *rtc_attrs[]={$/;"	v	typeref:struct:attribute	file:
+rtc_attrs	sysfs_skel.c	/^static struct attribute *rtc_attrs[]={$/;"	v	typeref:struct:attribute	file:
+rtc_time	rtc.h	/^struct rtc_time {$/;"	s
+rtcsysfs_exit	rtc_sysfs.c	/^module_exit(rtcsysfs_exit);$/;"	v
+rtcsysfs_exit	rtc_sysfs.c	/^static void __exit rtcsysfs_exit(void){$/;"	f	file:
+rtcsysfs_exit	sysfs_skel.c	/^module_exit(rtcsysfs_exit);$/;"	v
+rtcsysfs_exit	sysfs_skel.c	/^static void __exit rtcsysfs_exit(void){$/;"	f	file:
+rtcsysfs_init	rtc_sysfs.c	/^module_init(rtcsysfs_init);$/;"	v
+rtcsysfs_init	rtc_sysfs.c	/^static int __init rtcsysfs_init(void){$/;"	f	file:
+rtcsysfs_init	sysfs_skel.c	/^module_init(rtcsysfs_init);$/;"	v
+rtcsysfs_init	sysfs_skel.c	/^static int __init rtcsysfs_init(void){$/;"	f	file:
+sec	rtc.h	/^	unsigned char sec;$/;"	m	struct:rtc_time
+set_rtc	rtc_sysfs.c	/^static int set_rtc(unsigned char data, unsigned char addr){$/;"	f	file:
+set_rtc	sysfs_skel.c	/^static int set_rtc(unsigned char data, unsigned char addr){$/;"	f	file:
+time_attr	rtc_sysfs.c	/^static struct kobj_attribute time_attr=__ATTR(time,0666,time_show,time_store);$/;"	v	typeref:struct:kobj_attribute	file:
+time_attr	sysfs_skel.c	/^static struct kobj_attribute time_attr=__ATTR(time,0666,time_show,time_store);$/;"	v	typeref:struct:kobj_attribute	file:
+time_show	rtc_sysfs.c	/^static ssize_t time_show(struct kobject *kobj, struct attribute *attr, char *buff){$/;"	f	file:
+time_show	sysfs_skel.c	/^static ssize_t time_show(struct kobject *kobj, struct attribute *attr, char *buff){$/;"	f	file:
+time_store	rtc_sysfs.c	/^static ssize_t time_store(struct kobject *kobj, struct attribute *attr, const char *buff, size_t count){$/;"	f	file:
+time_store	sysfs_skel.c	/^static ssize_t time_store(struct kobject *kobj, struct attribute *attr, const char *buff, size_t count){$/;"	f	file:
+year	rtc.h	/^	unsigned char year;$/;"	m	struct:rtc_time
