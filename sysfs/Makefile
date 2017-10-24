@@ -1,5 +1,7 @@
-obj-m:=rtc_sysfs.o
+#obj-m:=rtc_sysfs.o
 #obj-m+=sysfs_skel.o
+#obj-m+=rtcsysfs_comman.o
+obj-m+=apic_sysfs.o
 
 KDIR=/lib/modules/$(shell uname -r)/build
 
