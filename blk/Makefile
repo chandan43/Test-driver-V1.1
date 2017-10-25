@@ -1,4 +1,5 @@
-obj-m:=blk_drv.o
+#obj-m:=blk_drv.o
+obj-m:=ramblk_drv.o
 
 KDIR=/lib/modules/$(shell uname -r)/build
 
