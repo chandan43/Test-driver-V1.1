@@ -8,6 +8,9 @@
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <linux/hdreg.h>
+#include <linux/kernel.h>
+#include <linux/version.h>
+
 #include "ram.h"
 
 #define DEVICE_NAME "blk_drv"
@@ -33,6 +36,7 @@ typedef struct blk_dev{
 	struct gendisk *gd;
 	struct request_queue *Queue;
 	spinlock_t lock;
+//	u8 *buffer;
 }Dev;
 
 Dev *dev;
@@ -42,18 +46,54 @@ static void copy_mbr(u8 *disk){
 	memcpy(disk + PARTITION_TABLE_OFFSET, &deff_partition_table, PARTITION_TABLE_SIZE);
 	*(unsigned short *)(disk + MBR_SIGNATURE_OFFSET) = MBR_SIGNATURE;   /*Partition sector have the endmark MBR_SIGNATURE(0xAA55) */
 }
-static void blkdrv_transfer(Dev *dev,sector_t sector,unsigned long nsector,char *buffer,int write){
-	unsigned long offset=sector*logical_block_size;
-	unsigned long nbytes=nsector*logical_block_size;
-	if((offset+nbytes) > dev->size){
-		pr_notice("Beyond-end write (%ld %ld)\n",offset,nbytes);
-		return;
-	}
-	if(write)
-		memcpy(dev->data+offset,buffer,nbytes);
-	else
-		memcpy(buffer,dev->data+offset,nbytes);
+//static int blkdrv_transfer(struct request *req,sector_t start_sector,unsigned long sector_cnt,u8 *buffer,int direction){
+static int blkdrv_transfer(struct request *req){
+	sector_t start_sector=blk_rq_pos(req);
+	unsigned int sector_cnt = blk_rq_sectors(req);
+	int direction=rq_data_dir(req);
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3,14,0)) 
+#define  BV_PAGE(bv) ((bv)->bv_page)
+#define BV_OFFSET(bv) ((bv)->bv_offset)
+#define BV_LEN(bv) ((bv)->bv_len)
+	struct bio_vec *bv;
+#else 
+#define BV_PAGE(bv) ((bv).bv_page)
+#define BV_OFFSET(bv) ((bv).bv_offset)
+#define BV_LEN(bv) ((bv).bv_len)
+	struct bio_vec bv;
+#endif
+	struct req_iterator iter;
+	static unsigned int sectors;
+	unsigned long offset;
+	unsigned long nbytes;
+	static int ret;
+	u8 *buffer;
+	sector_t sector_offset;
+	sector_offset=0;
+	rq_for_each_segment(bv, req, iter){
+		buffer=page_address(BV_PAGE(bv) + BV_OFFSET(bv));
+		if( BV_LEN(bv) % logical_block_size !=0){
+			pr_err("%s: Should never happen: bio size (%d) is not a multiple of ''logical_block_size'' (%d)\n",__func__,BV_LEN(bv),logical_block_size);
+			ret = -EIO;
+		}
+		sectors = BV_LEN(bv)/logical_block_size;
+		pr_info("%s: Start Sector: %llu, Sector Offset: %llu; Buffer: %p; Length: %u sectors\n",__func__,
+				(unsigned long long)(start_sector), (unsigned long long)(sector_offset), buffer, sectors);
 
+		offset= (start_sector + sector_offset) * logical_block_size;
+		nbytes= sectors *logical_block_size;
+		if(direction)
+			memcpy(dev->data+offset,buffer,nbytes);
+		else
+			memcpy(buffer,dev->data+offset,nbytes);
+		sector_offset += sectors;
+	}
+	if(sector_offset != sector_cnt){
+		pr_err("%s: Bio info doesn't match with the request info\n",__func__);
+		ret = -EIO;
+	}
+	pr_info("ret value===%d\n",ret);
+	return ret;
 }
 /*
  * blk_rq_pos()                 : the current sector
@@ -65,6 +105,7 @@ static void blkdrv_transfer(Dev *dev,sector_t sector,unsigned long nsector,char 
  */
 static void blkdrv_req(struct request_queue *q){
 	struct request *req;
+	int ret;
 	req=blk_fetch_request(q);
 	while(req!=NULL){
 		if(req==NULL && req->cmd_type!=REQ_TYPE_FS){
@@ -72,22 +113,22 @@ static void blkdrv_req(struct request_queue *q){
 			__blk_end_request_all(req,-EIO);
 			continue;
 		}
-		blkdrv_transfer(dev,blk_rq_pos(req),blk_rq_cur_sectors(req),req->buffer,rq_data_dir(req));
-		if(!__blk_end_request_cur(req,0)){
+	//	ret=blkdrv_transfer(req,blk_rq_pos(req),blk_rq_sectors(req),dev->buffer,rq_data_dir(req));
+		ret=blkdrv_transfer(req);
+		__blk_end_request_all(req, 0);
+/*		if(!__blk_end_request_cur(req,0)){
 			req=blk_fetch_request(q);
-		}
+		}*/
 	}
 	
 }
-/*static int blkdrv_getgeo(struct block_device *blk_dev, struct hd_geometry *geo){
-	long size;
-	size=dev->size *(logical_block_size / KERNEL_SECTOR_SIZE);
-	geo->cylinders= (size & ~0x3f) >> 6 ;
-	geo->heads= 4;
-	geo->sectors=16;
-	geo->start=4;
+static int blkdrv_getgeo(struct block_device *blk_dev, struct hd_geometry *geo){
+	geo->heads= 1;
+	geo->cylinders= 32 ;
+	geo->sectors=32;
+	geo->start=0;
 	return 0;
-}*/
+}
 static int blkdrv_open(struct block_device *blk_dev, fmode_t mode){
 	unsigned int unit = iminor(blk_dev->bd_inode);
 	pr_info("Block Device: Device is opened\n");
@@ -101,16 +142,15 @@ static void blkdrv_release(struct gendisk *gd, fmode_t mode){
 }
 static const struct block_device_operations blkdrv_fops = {
 	.owner   = THIS_MODULE,
-//	.getgeo  = blkdrv_getgeo,
 	.open    = blkdrv_open,
 	.release = blkdrv_release,
+	.getgeo  = blkdrv_getgeo,
 };
 
 static int blkdrv_init(void){
 	pr_info("%s: Initialization of Block device driver\n",__func__);
 	dev=kmalloc(sizeof(struct blk_dev),GFP_KERNEL);
 	dev->size=logical_block_size*nsector;
-	pr_info("size =%d ,cyl=geo->cylinders %d\n",dev->size,((dev->size & ~(0x3f))>>6));
 	spin_lock_init(&dev->lock);
 	dev->data=vmalloc(dev->size);
 	if(!dev->data){
@@ -118,34 +158,36 @@ static int blkdrv_init(void){
 		return -ENOMEM;
 	}
 	copy_mbr(dev->data);                                                                           /*Copy disk partition table*/
-	dev->Queue=blk_init_queue(blkdrv_req,&dev->lock);
-	if(!dev->Queue){
-		pr_err("blk_init_queue: Queue Initialization Failed\n");
-		goto free;
-	}
-	blk_queue_logical_block_size(dev->Queue,logical_block_size);
 	/*device regidtration*/
 	majornumber=register_blkdev(0,DEVICE_NAME);
 	if(majornumber < 0){
 		pr_err("%s: BLOCK device registeration failed\n",__func__);
 		goto free;
 	}
+	dev->Queue=blk_init_queue(blkdrv_req,&dev->lock);
+	if(!dev->Queue){
+		pr_err("blk_init_queue: Queue Initialization Failed\n");
+		goto free;
+	}
+//	blk_queue_logical_block_size(dev->Queue,logical_block_size);
 	dev->gd=alloc_disk(MINOR_NO);
 	if(!dev->gd){
 		pr_err("GENDISK: alloc_disc Allocation failed\n");
 		goto unregister;
 	}
-	dev->gd->major=majornumber;
+//	dev->gd->major=majornumber;
+	dev->gd->major=0;
 	dev->gd->first_minor=0;
-//	dev->gd->minors=2;
+	dev->gd->minors=16;
 	dev->gd->fops=&blkdrv_fops;
 	dev->gd->private_data=&dev;
-	strcpy(dev->gd->disk_name,"sbd0");
+	strcpy(dev->gd->disk_name,"vd");
 	set_capacity(dev->gd,nsector);
 	dev->gd->queue=dev->Queue;
 	add_disk(dev->gd);
 	return 0;
 unregister:
+	blk_cleanup_queue(dev->Queue);
 	unregister_blkdev(majornumber,DEVICE_NAME);
 free:
 	vfree(dev->data);

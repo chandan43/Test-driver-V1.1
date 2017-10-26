@@ -1,4 +1,5 @@
-#define SECTOR_SIZE               512
+
+#define SECTOR_SIZE 		  512
 #define MBR_SIZE SECTOR_SIZE
 #define MBR_DISK_SIGNATURE_OFFSET 440                 /* 4-byte disk signature is placed at the offset 440.*/
 #define MBR_DISK_SIGNATURE_SIZE     4                 /* DISK OFFSET SIZE*/  
@@ -7,7 +8,7 @@
 #define PARTITION_TABLE_SIZE       64                 /* sizeof(PartTable) */
 #define MBR_SIGNATURE_OFFSET      510                 /* MBR_SIZE - MBR_SIGNATURE_SIZE*/
 #define MBR_SIGNATURE_SIZE          2
-#define MBR_SIGNATURE          0xAA55
+#define MBR_SIGNATURE           0xAA55
 
 /*
 Element (offset) 	Size	 	Description
