@@ -64,7 +64,7 @@ static int blkdrv_transfer(struct request *req){
 #endif
 	struct req_iterator iter;
 	static unsigned int sectors;
-	unsigned long offset;
+	sector_t offset;
 	unsigned long nbytes;
 	static int ret;
 	u8 *buffer;
@@ -80,12 +80,12 @@ static int blkdrv_transfer(struct request *req){
 		pr_info("%s: Start Sector: %llu, Sector Offset: %llu; Buffer: %p; Length: %u sectors\n",__func__,
 				(unsigned long long)(start_sector), (unsigned long long)(sector_offset), buffer, sectors);
 
-		offset= (start_sector + sector_offset) * logical_block_size;
+		offset= (start_sector + sector_offset);
 		nbytes= sectors *logical_block_size;
 		if(direction)
-			memcpy(dev->data+offset,buffer,nbytes);
+			memcpy(dev->data + offset * logical_block_size ,buffer,nbytes);
 		else
-			memcpy(buffer,dev->data+offset,nbytes);
+			memcpy(buffer,dev->data + offset * logical_block_size ,nbytes);
 		sector_offset += sectors;
 	}
 	if(sector_offset != sector_cnt){
@@ -115,9 +115,11 @@ static void blkdrv_req(struct request_queue *q){
 		}
 	//	ret=blkdrv_transfer(req,blk_rq_pos(req),blk_rq_sectors(req),dev->buffer,rq_data_dir(req));
 		ret=blkdrv_transfer(req);
-		__blk_end_request_all(req, 0);
+		__blk_end_request_all(req,ret);
 /*		if(!__blk_end_request_cur(req,0)){
-			req=blk_fetch_request(q);
+		//	req=blk_fetch_request(q);
+//		__blk_end_request(req, ret, blk_rq_bytes(req));
+		//	__blk_end_request_all(req,ret);
 		}*/
 	}
 	
@@ -175,16 +177,17 @@ static int blkdrv_init(void){
 		pr_err("GENDISK: alloc_disc Allocation failed\n");
 		goto unregister;
 	}
-//	dev->gd->major=majornumber;
-	dev->gd->major=0;
-	dev->gd->first_minor=0;
+	dev->gd->major=majornumber;
+//	dev->gd->first_minor=0;
 	dev->gd->minors=16;
 	dev->gd->fops=&blkdrv_fops;
 	dev->gd->private_data=&dev;
+	dev->gd->queue=dev->Queue;
 	strcpy(dev->gd->disk_name,"vd");
 	set_capacity(dev->gd,nsector);
-	dev->gd->queue=dev->Queue;
 	add_disk(dev->gd);
+	pr_info(": Ram Block driver initialised (%d sectors; %d bytes)\n",
+		nsector, dev->size);
 	return 0;
 unregister:
 	blk_cleanup_queue(dev->Queue);
