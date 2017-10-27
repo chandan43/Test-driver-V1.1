@@ -106,13 +106,12 @@ static int blkdrv_transfer(struct request *req){
 static void blkdrv_req(struct request_queue *q){
 	struct request *req;
 	int ret;
-	req=blk_fetch_request(q);
-	while(req!=NULL){
-		if(req==NULL && req->cmd_type!=REQ_TYPE_FS){
+	while((req=blk_fetch_request(q)) != NULL){
+	/*(	if(req==NULL && req->cmd_type!=REQ_TYPE_FS){
 			pr_err("%s: Request type is not FS(REQ_TYPE_FS) type\n",__func__);
 			__blk_end_request_all(req,-EIO);
 			continue;
-		}
+		}*/
 	//	ret=blkdrv_transfer(req,blk_rq_pos(req),blk_rq_sectors(req),dev->buffer,rq_data_dir(req));
 		ret=blkdrv_transfer(req);
 		__blk_end_request_all(req,ret);
