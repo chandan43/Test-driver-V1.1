@@ -17,13 +17,14 @@
 #include <linux/vmalloc.h>
 #include <linux/slab.h>
 
-#include "partition.h"
+#include "partition_info.h"
 
 #define FIRST_MINOR 0
 #define MINOR_CNT 16
 #define DEVICE_SIZE 1024 /* sectors */
 /* So, total device size = 1024 * 512 bytes = 512 KiB */
 #define SECTOR_SIZE 512
+#define SIZE(a) (sizeof(a) / sizeof(*a))
 
 static u_int majornumber = 0;
 int i; 
@@ -40,11 +41,25 @@ typedef struct rb_device
 
 Dev *dev;
 
-static void copy_mbr(u8 *disk)
-{
+#if BR
+static void copy_br(u8 *disk,int start_cylinder, const PartitionTable *part_table){
+	disk+=(start_cylinder * 32 * SECTOR_SIZE);            /*Total sectors of extended partition / Total no of  Cylinder = 320/10 =32*/
+	memset(disk, 0x0, BR_SIZE);
+	memcpy(disk + PARTITION_TABLE_OFFSET,part_table,PARTITION_TABLE_SIZE);
+	*(unsigned short *)(disk + BR_SIGNATURE_OFFSET) = BR_SIGNATURE;
+}
+void copy_br_partition_data(u8 *disk){
+	int i;
+	for(i=0;i<SIZE(different_log_part_table);i++){
+		copy_br(disk,different_log_part_br_cyl[i],&different_log_part_table[i]);
+	}
+}
+#endif
+
+static void copy_mbr(u8 *disk){
 	memset(disk, 0x0, MBR_SIZE);
 	*(unsigned long *)(disk + MBR_DISK_SIGNATURE_OFFSET) = 0x36E5756D;
-	memcpy(disk + PARTITION_TABLE_OFFSET, &def_part_table, PARTITION_TABLE_SIZE);
+	memcpy(disk + PARTITION_TABLE_OFFSET, &different_partition_table, PARTITION_TABLE_SIZE);
 	*(unsigned short *)(disk + MBR_SIGNATURE_OFFSET) = MBR_SIGNATURE;
 }
 
@@ -171,6 +186,9 @@ static int __init blkdrv_init(void)
 		return -ENOMEM;
 	}
 	copy_mbr(dev->data);                                         /* Setup its partition table */
+#if BR
+	copy_br_partition_data(dev->data);
+#endif
 	/* Get a request queue (here queue is created) */
 	dev->Queue = blk_init_queue(blkdrv_request, &dev->lock);
 	if (!dev->Queue){

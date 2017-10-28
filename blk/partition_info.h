@@ -1,3 +1,4 @@
+#define BR 1                                            /*Extented partition info*/
 #define SECTOR_SIZE               512      
 #define MBR_SIZE SECTOR_SIZE
 #define MBR_DISK_SIGNATURE_OFFSET 440			/* 4-byte disk signature is placed at the offset 440.*/
@@ -8,6 +9,13 @@
 #define MBR_SIGNATURE_OFFSET      510                   /* MBR_SIZE - MBR_SIGNATURE_SIZE*/
 #define MBR_SIGNATURE_SIZE          2
 #define MBR_SIGNATURE          0xAA55
+
+#if BR
+#define BR_SIZE SECTOR_SIZE
+#define BR_SIGNATURE_OFFSET      510
+#define BR_SIGNATURE_SIZE          2
+#define BR_SIGNATURE          0xAA55
+#endif
 
 typedef struct
 {
@@ -23,7 +31,7 @@ typedef struct
 	unsigned char end_cyl;                           /* 10 bits Ending Cylinder*/
 	unsigned int abs_start_sec;                      /* Relative Sector (to start of partition -- also equals the partition's starting LBA value)*/
 	unsigned int sec_in_part;		         /* Total Sectors in partition */	
-} PartEntry;
+} PartitionEntry;
 
 /*
 Element (offset) 	Size	 	Description
@@ -43,9 +51,9 @@ Note: The System ID byte is supposed to indicate what filesystem is contained on
 Extended partitions are a way of adding more than 4 partitions to a partition table.The partition table may have one and only one entry 
 that has the SystemID 0x5 (or 0xF). This describes an extended partition. */
 
-typedef PartEntry PartTable[4];
+typedef PartitionEntry PartitionTable[4];
 
-static PartTable def_part_table =
+static PartitionTable different_partition_table =
 {
 	{
 		boot_type: 0x00,				
@@ -86,3 +94,77 @@ static PartTable def_part_table =
 	{
 	}
 };
+
+#if BR
+static unsigned int different_log_part_br_cyl[] = {0x0A, 0x0E, 0x12};
+static const PartitionTable different_log_part_table[] =
+{
+	{
+		{
+			boot_type: 0x00,
+			start_head: 0x00,
+			start_sec: 0x2,
+			start_cyl: 0x0A,
+			part_type: 0x83,
+			end_head: 0x00,
+			end_sec: 0x20,
+			end_cyl: 0x0D,
+			abs_start_sec: 0x00000001,
+			sec_in_part: 0x0000007F
+		},
+		{
+			boot_type: 0x00,
+			start_head: 0x00,
+			start_sec: 0x1,
+			start_cyl: 0x0E,
+			part_type: 0x05,
+			end_head: 0x00,
+			end_sec: 0x20,
+			end_cyl: 0x11,
+			abs_start_sec: 0x00000080,
+			sec_in_part: 0x00000080
+		},
+	},
+	{
+		{
+			boot_type: 0x00,
+			start_head: 0x00,
+			start_sec: 0x2,
+			start_cyl: 0x0E,
+			part_type: 0x83,
+			end_head: 0x00,
+			end_sec: 0x20,
+			end_cyl: 0x11,
+			abs_start_sec: 0x00000001,
+			sec_in_part: 0x0000007F
+		},
+		{
+			boot_type: 0x00,
+			start_head: 0x00,
+			start_sec: 0x1,
+			start_cyl: 0x12,
+			part_type: 0x05,
+			end_head: 0x00,
+			end_sec: 0x20,
+			end_cyl: 0x13,
+			abs_start_sec: 0x00000100,
+			sec_in_part: 0x00000040
+		},
+	},
+	{
+		{
+			boot_type: 0x00,
+			start_head: 0x00,
+			start_sec: 0x2,
+			start_cyl: 0x12,
+			part_type: 0x83,
+			end_head: 0x00,
+			end_sec: 0x20,
+			end_cyl: 0x13,
+			abs_start_sec: 0x00000001,
+			sec_in_part: 0x0000003F
+		},
+	}
+};
+
+#endif 
