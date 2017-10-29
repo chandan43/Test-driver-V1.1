@@ -114,9 +114,11 @@ static void __exit char_dev_exit(void){
 static int chardev_open(struct inode *inodep, struct file *filep){
 	numdev++;
 	pr_info("%s: Device open %d times\n",__func__,numdev);
+	try_module_get(THIS_MODULE);
 	return 0;
 }
 static int chardev_release(struct inode *inodep, struct file *filep){
+	module_put(THIS_MODULE);
 	pr_info("%s: Device closed successfully\n",__func__);
 	return 0;
 }
