@@ -68,6 +68,36 @@ static struct usb_kbd {
 	spinlock_t leds_lock;
 	bool led_urb_submitted;
 };
+
+static void usb_kbd_irq(struct urb *urb){
+	struct usb_kbd *kbd = urb->context;			/*(in) context for completion */
+	int i;
+	/* (return) non-ISO status */
+	switch(urb->status){
+		case 0:			/* success */
+			break;
+		case -ECONNRESET:	/* unlink ,Connection reset by peer */
+		case -ENOENT:           /*No such device*/
+		case -ESHUTDOWN:        /*Can't send after transport endpoint shutdown*/
+			return;
+		/* -EPIPE:  should clear the halt */
+		default:		/* error */
+			goto resubmit;
+	}
+	/*which upon every interrupt from the button checks its state and reports it via the input_report_key() call to the input system. */
+	/* input_event() - report new input event input_report_key(struct input_dev *dev, unsigned int code, int value)*/
+	for(i=0;i<8;i++)
+		input_report_key(kbd->dev, usb_kbd_keycode[i + 224], (kbd->new[0] >> i) & 1); /*special character*/ 
+	for(i=2;i<8;i++){
+		if(kbd->old[i] > 3 && memscan(kbd->new + 2, kbd->old[i], 6) == kbd->new + 8)
+	}
+resubmit:
+	i= usb_submit_urb(urb,GFP_ATOMIC);
+	if(i)
+		hid_err(urb->dev, "can't resubmit intr, %s-%s/input0, status %d",
+			kbd->usbdev->bus->bus_name,
+			kbd->usbdev->devpath, i);
+}
 /*We have already seen how spin_lock works. spin_lock_irqsave disables interrupts (on the local processor only) 
 	before taking the spinlock; the previous interrupt state is stored in flags. */
 static int usb_kbd_event(struct input_dev *dev, unsigned int type, unsigned int code, int value){
@@ -80,9 +110,48 @@ static int usb_kbd_event(struct input_dev *dev, unsigned int type, unsigned int 
  * test_bit - Determine whether a bit is set
  * @nr: bit number to test
  * @addr: Address to start counting from
+ * EX =0x04 & 0x0F = 0x04 (4) 
+ * !!(0x04 & 0x0F) = !4 = ! 0 = 1 
  */
-	kbd->newleds = 	(!!test_bit(LED_KANA, dev->led) << 3|
-} 
+	kbd->newleds = 	(!!test_bit(LED_KANA, dev->led) << 3) | (!!(test_bit(LED_COMPOSE, dev->led) << 3))
+		        (!!test_bit(LED_SCROLLL, dev->led) << 2) | (!!test_bit(LED_CAPSL, dev->led) << 1) |
+			(!!test_bit(LED_NUML, dev->led));
+
+}
+
+/**
+ * usb_submit_urb - issue an asynchronous transfer request for an endpoint
+ * @urb: pointer to the urb describing the request
+ * @mem_flags: the type of memory to allocate, see kmalloc() for a list
+ *	of valid options for this.
+ *
+ * This submits a transfer request, and transfers control of the URB
+ * describing that request to the USB subsystem.  Request completion will
+ * be indicated later, asynchronously, by calling the completion handler.
+ * The three types of completion are success, error, and unlink
+ * (a software-induced fault, also called "request cancellation").
+ *
+ * URBs may be submitted in interrupt context.
+*/
+static  int usb_kbd_open(struct input_dev *dev){
+	struct usb_kbd *kbd=input_get_drvdata(dev);
+	kbd->irq->dev=kbd->usbdev;                  /*(in) pointer to associated device */
+	if(usb_submit_urb(kbd->irq,GFP_KERNEL))            /* Return:* 0 on successful submissions. A negative error number otherwise.*/
+		return -EIO;
+	return 0;
+}
+/**
+ * usb_kill_urb - cancel a transfer request and wait for it to finish
+ * @urb: pointer to URB describing a previously submitted request,
+ *	may be NULL
+ */
+
+static void usb_kbd_close(struct input_dev *dev)
+{
+	struct usb_kbd *kbd = input_get_drvdata(dev);
+
+	usb_kill_urb(kbd->irq);
+}
 /**
  * usb_alloc_urb - creates a new urb for a USB driver to use
  * @iso_packets: number of iso packets for this urb
@@ -256,7 +325,25 @@ static int usb_kbd_probe(struct usb_interface *iface,const struct usb_device_id 
 	clear_bit(0, input_dev->keybit);
 	input_dev->event = usb_kbd_event;
 	input_dev->open = usb_kbd_open;
-	input_dev->close = usb_kbd_close;	
+	input_dev->close = usb_kbd_close;
+/**
+ * usb_fill_int_urb - macro to help initialize a interrupt urb
+ * @urb: pointer to the urb to initialize.
+ * @dev: pointer to the struct usb_device for this urb.
+ * @pipe: the endpoint pipe
+ * @transfer_buffer: pointer to the transfer buffer
+ * @buffer_length: length of the transfer buffer
+ * @complete_fn: pointer to the usb_complete_t function
+ * @context: what to set the urb context to.
+ * @interval: what to set the urb interval to, encoded like
+ *	the endpoint descriptor's bInterval value.
+ *
+ * Initializes a interrupt urb with the proper information needed to submit
+ * it to a device.
+*/
+	usb_fill_int_urb(kbd->irq, dev, pipe,
+			 kbd->new, (maxp > 8 ? 8 : maxp),
+			 usb_kbd_irq, kbd, endpoint->bInterval); /*The bInterval value contains the polling interval for interrupt and isochronous endpoints*/	
 	return 0;
 fail2:
 	usb_kbd_free_mem(dev, kbd);
