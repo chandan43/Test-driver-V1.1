@@ -8,10 +8,262 @@
 #include <linux/slab.h>
 #include <linux/usb/input.h>
 #include <linux/hid.h>
+static const unsigned char usb_kbd_keycode[256] = {
+	  0,  0,  0,  0, 30, 48, 46, 32, 18, 33, 34, 35, 23, 36, 37, 38,
+	 50, 49, 24, 25, 16, 19, 31, 20, 22, 47, 17, 45, 21, 44,  2,  3,
+	  4,  5,  6,  7,  8,  9, 10, 11, 28,  1, 14, 15, 57, 12, 13, 26,
+	 27, 43, 43, 39, 40, 41, 51, 52, 53, 58, 59, 60, 61, 62, 63, 64,
+	 65, 66, 67, 68, 87, 88, 99, 70,119,110,102,104,111,107,109,106,
+	105,108,103, 69, 98, 55, 74, 78, 96, 79, 80, 81, 75, 76, 77, 71,
+	 72, 73, 82, 83, 86,127,116,117,183,184,185,186,187,188,189,190,
+	191,192,193,194,134,138,130,132,128,129,131,137,133,135,136,113,
+	115,114,  0,  0,  0,121,  0, 89, 93,124, 92, 94, 95,  0,  0,  0,
+	122,123, 90, 91, 85,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+	  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+	  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+	  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+	  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+	 29, 42, 56,125, 97, 54,100,126,164,166,165,163,161,115,114,113,
+	150,158,159,128,136,177,178,176,142,152,173,140
+};
+
+/**
+ * struct usb_kbd - state of each attached keyboard
+ * @dev:	input device associated with this keyboard
+ * @usbdev:	usb device associated with this keyboard
+ * @old:	data received in the past from the @irq URB representing which
+ *		keys were pressed. By comparing with the current list of keys
+ *		that are pressed, we are able to see key releases.
+ * @irq:	URB for receiving a list of keys that are pressed when a
+ *		new key is pressed or a key that was pressed is released.
+ * @led:	URB for sending LEDs (e.g. numlock, ...)
+ * @newleds:	data that will be sent with the @led URB representing which LEDs
+ 		should be on
+ * @name:	Name of the keyboard. @dev's name field points to this buffer
+ * @phys:	Physical path of the keyboard. @dev's phys field points to this
+ *		buffer
+ * @new:	Buffer for the @irq URB
+ * @cr:		Control request for @led URB
+ * @leds:	Buffer for the @led URB
+ * @new_dma:	DMA address for @irq URB
+ * @leds_dma:	DMA address for @led URB
+ * @leds_lock:	spinlock that protects @leds, @newleds, and @led_urb_submitted
+ * @led_urb_submitted: indicates whether @led is in progress, i.e. it has been
+ *		submitted and its completion handler has not returned yet
+ *		without	resubmitting @led
+ */
+static struct usb_kbd {
+	struct input_dev *dev;
+	struct usb_device *usbdev;
+	unsigned char old[8];
+	struct urb *irq, *led;
+	unsigned char newleds;
+	char name[128];
+	char phys[64];
+	unsigned char *new;
+	struct usb_ctrlrequest *cr;
+	unsigned char *leds;
+	dma_addr_t new_dma
+	dma_addr_t leds_dma;
+	spinlock_t leds_lock;
+	bool led_urb_submitted;
+};
+/*We have already seen how spin_lock works. spin_lock_irqsave disables interrupts (on the local processor only) 
+	before taking the spinlock; the previous interrupt state is stored in flags. */
+static int usb_kbd_event(struct input_dev *dev, unsigned int type, unsigned int code, int value){
+	unsigned long flags;
+	struct usb_kbd *kbd=input_get_drvdata(dev);
+	if (type != EV_LED)
+		return -1;
+	spin_lock_irqsave(&kbd->leds_lock, flags);	
+/**
+ * test_bit - Determine whether a bit is set
+ * @nr: bit number to test
+ * @addr: Address to start counting from
+ */
+	kbd->newleds = 	(!!test_bit(LED_KANA, dev->led) << 3|
+} 
+/**
+ * usb_alloc_urb - creates a new urb for a USB driver to use
+ * @iso_packets: number of iso packets for this urb
+ * @mem_flags: the type of memory to allocate, see kmalloc() for a list of
+ *	valid options for this.
+ *
+ * Creates an urb for the USB driver to use, initializes a few internal
+ * structures, increments the usage counter, and returns a pointer to it.
+ *
+ * If the driver want to use this urb for interrupt, control, or bulk
+ * endpoints, pass '0' as the number of iso packets.
+ *
+ * The driver must call usb_free_urb() when it is finished with the urb.
+ *
+ * Return: A pointer to the new urb, or %NULL if no memory is available.
+ */
+/**
+ * usb_alloc_coherent - allocate dma-consistent buffer for URB_NO_xxx_DMA_MAP
+ * @dev: device the buffer will be used with
+ * @size: requested buffer size
+ * @mem_flags: affect whether allocation may block
+ * @dma: used to return DMA address of buffer
+ *
+ * Return: Either null (indicating no buffer could be allocated), or the
+ * cpu-space pointer to a buffer that may be used to perform DMA to the
+ * specified device.  Such cpu-space buffers are returned along with the DMA
+ * address (through the pointer provided).
+ *
+ * Note:
+ * These buffers are used with URB_NO_xxx_DMA_MAP set in urb->transfer_flags
+ * to avoid behaviors like using "DMA bounce buffers", or thrashing IOMMU
+ * hardware during URB completion/resubmit.  The implementation varies between
+ * platforms, depending on details of how DMA will work to this device.
+ * Using these buffers also eliminates cacheline sharing problems on
+ * architectures where CPU caches are not DMA-coherent.  On systems without
+ * bus-snooping caches, these buffers are uncached.
+ *
+ * When the buffer is no longer used, free it with usb_free_coherent().
+ */
+static int  usb_kbd_alloc_mem(struct usb_device *dev, struct usb_kbd *kbd){
+	if(!(kbd->irq = usb_alloc_urb(0, GFP_KERNEL)))
+		return -1;
+	if(!(kbd->led = usb_alloc_urb(0, GFP_KERNEL) ))
+		return -1;
+	if(!(kbd->new = usb_alloc_coherent(dev,8, GFP_ATOMIC, &kbd->new_dma)))
+		return -1;
+	if(!(kbd->cr = kmalloc(sizeof(struct usb_ctrlrequest), GFP_KERNEL)))
+		return -1;
+	if(!(kbd->leds = usb_alloc_coherent(dev,1, GFP_ATOMIC, &kbd->leds_dma))	
+		retuen -1;
+}
+static void  usb_kbd_free_mem(struct usb_device *dev, struct usb_kbd *kbd){
+	usb_free_urb(kbd->irq);
+	usb_free_urb(kbd->led);
+	usb_free_coherent(dev, 8, kbd->new, kbd->new_dma);
+	kfree(kbd->cr)
+	usb_free_coherent(dev,1, kbd->leds, kbd->leds_dma);
+} 
+
+/* interface_to_usbdev :- A USB device driver commonly has to convert data from a given struct usb_interface structure 
+   into a struct usb_device structure that the USB core needs for a wide range of function calls.
+ * usb_host_interface: -USB endpoints are bundled up into interfaces. USB interfaces handle only one type of a USB 
+  logical connection, such as a mouse, a keyboard, or a audio stream.such as a USB speaker that might consist of two 
+  interfaces: a USB keyboard for the buttons and a USB audio stream. USB interfaces are described in the kernel with 
+  the struct usb_interface structure. This structure is what the USB core passes to USB drivers and is what the USB 
+  driver then is in charge of controlling. 
+ *usb_endpoint_descriptor :The most basic form of USB communication is through something called an endpoint. A USB 
+  endpoint can carry data in only one direction, either from the host computer to the device (called an OUT endpoint) 
+  or from the device to the host computer (called an IN endpoint). Endpoints can be thought of as unidirectional pipes.   
+  NOTE : Control and bulk endpoints are used for asynchronous data transfers, Interrupt and isochronous endpoints are periodic. 
+  -->USB endpoints are described in the kernel with the structure struct usb_host_endpoint. This structure contains the real endpoint
+  information in another structure called struct usb_endpoint_descriptor. The latter structure contains all of the USB-specific data 
+  in the exact format that the device itself specified. The fields of this structure that drivers care about are:
+   */
+/*
+ * Event types: input-event-codes.h
+#define EV_SYN			0x00     Used as markers to separate events. Events may be separated in time or in space, such as with the multitouch protocol.
+#define EV_KEY			0x01     Used to describe state changes of keyboards, buttons, or other key-like devices.
+#define EV_REL			0x02     Used to describe relative axis value changes, e.g. moving the mouse 5 units to the left.        
+#define EV_ABS			0x03     Used to describe absolute axis value changes, e.g. describing the coordinates of a touch on a touchscreen.
+#define EV_MSC			0x04     Used to describe miscellaneous input data that do not fit into other types.
+#define EV_SW			0x05     Used to describe binary state input switches.
+#define EV_LED			0x11     Used to turn LEDs on devices on and off
+#define EV_SND			0x12     Used to output sound to devices.
+#define EV_REP			0x14     Used for autorepeating devices.
+#define EV_FF			0x15     Used to send force feedback commands to an input device.
+#define EV_PWR			0x16     A special type for power button and switch input.
+#define EV_FF_STATUS		0x17     Used to receive force feedback device status.
+#define EV_MAX			0x1f
+#define EV_CNT			(EV_MAX+1) */
 
 static int usb_kbd_probe(struct usb_interface *iface,const struct usb_device_id *id){
 	pr_info("%s: Invoked Probe function\n",__func__);
+	struct usb_device *dev=interface_to_usbdev(iface);     /* Convert data from a given struct usb_interface structure into struct usb_device structure*/
+	struct usb_host_interface *interface;                  
+	struct usb_endpoint_descriptor *endpoint;              /* Contains all of the USB-specific data in the exact format that the device itself specified.*/
+	struct usb_kbd *kbd;                                   /* struct usb_kbd - state of each attached keyboard*/
+	struct input_dev *input_dev;                           /* input device associated with this keyboard*/
+	int i, pipe, maxp;
+        int error = -ENOMEM;
+	interface=iface->cur_altsetting;			/*Currently active alternate setting */
+	if(interface->desc.bNumEndpoints !=1)			/*Number of endpoints used by this interface*/	
+	          return -ENODEV;                               /*No Such Device */
+	endpoint=&interface->endpoint[0].desc; 
+ 	if(!usb_endpoint_is_int_in(endpoint))                  /* check if the endpoint is interrupt IN,Returns true if the endpoint has interrupt transfer type and IN direction, */  
+		return -ENODEV;
+	/*@pipe: Holds endpoint number, direction, type, and more*/
+        pipe=usb_rcvintpipe(dev, endpoint->bEndpointAddress); /*#define usb_rcvintpipe(dev, endpoint).bEndpointAddress: The address of the endpoint described by this descriptor. */
+	/*usb_maxpacket(struct usb_device *udev, int pipe, int is_out)*/
+	maxp=usb_maxpacket(dev, pipe, usb_pipeout(pipe));     /* get endpoint's max packet size, */
+	kbd = kzalloc(sizeof(struct usb_kbd), GFP_KERNEL);
+/**
+ * input_allocate_device - allocate memory for new input device
+ *
+ * Returns prepared struct input_dev or %NULL.
+ *
+ * NOTE: Use input_free_device() to free devices that have not been
+ * registered; input_unregister_device() should be used for already
+ * registered devices.
+ */
+	input_dev = input_allocate_device();
+	if(!kbd || !input_dev)
+                 goto fail1;
+	if (usb_kbd_alloc_mem(dev, kbd))
+		 goto fail2;
+	kbd->usbdev=dev;
+	spin_lock_init(&kbd->leds_lock);
+	if(dev->manufacturer)
+		strlcpy(kbd->name, dev->manufacturer, sizeof(kbd->name));
+	if(dev->product){
+		if(dev->manufacturer)
+			strlcat(kbd->name, " ", sizeof(kbd->name));
+`		strlcat(kbd->name, dev->product, sizeof(kbd->name));
+	}	
+	/*le16_to_cpu: To convert from little-endian format into the processor's native format you should use these functions*/
+	if(!strlen(dev->name))
+		snprintf(kbd->name, sizeof(kbd->name), "USB HIDBP Keyboard %04x:%04x", le16_to_cpu(dev->descriptor.idVendor), le16_to_cpu(dev->descriptor.idProduct)),
+/**
+ * usb_make_path - returns stable device path in the usb tree
+ * @dev: the device whose path is being constructed
+ * @buf: where to put the string
+ * @size: how big is "buf"?
+ *
+ * Return: Length of the string (> 0) or negative if size was too small.
+ */	
+	usb_make_path(dev, kbd->phys, sizeof(kbd->phys));	
+	strlcat(kbd->phys, "/input0", sizeof(kbd->phys));
+	input_dev->name=kbd->name;
+	input_dev->phys = kbd->phys;
+	/*Populate the input_id structure with information from usb dev's descriptor*/
+	usb_to_input_id(dev, &input_dev->id);
+	input_dev->dev.parent= &iface->dev;
+	input_set_drvdata(input_dev,kbd);
+	/*@evbit: bitmap of types of events supported by the device (EV_KEY, EV_REL, etc.)*/
+	input_dev->evbit[0]= BIT_MASK(EV_KEY) | BIT_MASK((EV_LED) | BIT_MASK(EV_REP);
+	/*@ledbit: bitmap of leds present on the device : Num Lock | Caps Lock | Scroll Lock|Compose|Kanai*/
+	input_dev->ledbit[0]= BIT_MASK(LED_NUML)|BIT_MASK(LED_CAPSL)|BIT_MASK(LED_SCROLLL)| BIT_MASK(LED_COMPOSE)|BIT_MASK(LED_KANA); 
+	/*static inline void set_bit(int nr, void *addr)*/
+/*
+ * __set_bit - Set a bit in memory
+ * @nr: the bit to set
+ * @addr: the address to start counting from
+ */
+/*
+ * clear_bit - Clears a bit in memory
+ * @nr: Bit to clear
+ * @addr: Address to start counting from
+ */
+	for(i=0;i<255;i++) 
+		set_bit(usb_kbd_keycode[i],input_dev->keybit); 	
+	clear_bit(0, input_dev->keybit);
+	input_dev->event = usb_kbd_event;
+	input_dev->open = usb_kbd_open;
+	input_dev->close = usb_kbd_close;	
 	return 0;
+fail2:
+	usb_kbd_free_mem(dev, kbd);
+fail1:	
+        input_free_device(input_dev);
+	kfree(kbd);
+	return error;
 } 
 
 static void usb_kbd_disconnect(struct usb_interface *intf){
