@@ -40,7 +40,7 @@ static const unsigned char usb_kbd_keycode[256] = {
  *		that are pressed, we are able to see key releases.
  * @irq:	URB for receiving a list of keys that are pressed when a
  *		new key is pressed or a key that was pressed is released.
- * @led:	URB for sending LEDs (e.g. numlock, ...)
+ * @led:	URB for sending LEDs (e.g. numlock, ...)/
  * @newleds:	data that will be sent with the @led URB representing which LEDs
  		should be on
  * @name:	Name of the keyboard. @dev's name field points to this buffer
@@ -56,7 +56,7 @@ static const unsigned char usb_kbd_keycode[256] = {
  *		submitted and its completion handler has not returned yet
  *		without	resubmitting @led
  */
-static struct usb_kbd {
+struct usb_kbd {
 	struct input_dev *dev;
 	struct usb_device *usbdev;
 	unsigned char old[8];
@@ -67,7 +67,7 @@ static struct usb_kbd {
 	unsigned char *new;
 	struct usb_ctrlrequest *cr;
 	unsigned char *leds;
-	dma_addr_t new_dma
+	dma_addr_t new_dma;
 	dma_addr_t leds_dma;
 	spinlock_t leds_lock;
 	bool led_urb_submitted;
@@ -92,6 +92,7 @@ recommended. */
 static void usb_kbd_irq(struct urb *urb){
 	struct usb_kbd *kbd = urb->context;			/*(in) context for completion */
 	int i;
+	pr_info("%s\n",__func__);
 	/* (return) non-ISO status */
 	switch(urb->status){
 		case 0:			/* success */
@@ -154,6 +155,7 @@ resubmit:
 static int usb_kbd_event(struct input_dev *dev, unsigned int type, unsigned int code, int value){
 	unsigned long flags;
 	struct usb_kbd *kbd=input_get_drvdata(dev);
+	pr_info("%s\n",__func__);
 	if (type != EV_LED)
 		return -1;
 	spin_lock_irqsave(&kbd->leds_lock, flags);	
@@ -164,20 +166,48 @@ static int usb_kbd_event(struct input_dev *dev, unsigned int type, unsigned int 
  * EX =0x04 & 0x0F = 0x04 (4) 
  * !!(0x04 & 0x0F) = !4 = ! 0 = 1 
  */
-	kbd->newleds = 	(!!test_bit(LED_KANA, dev->led) << 3) | (!!(test_bit(LED_COMPOSE, dev->led) << 3))
+	kbd->newleds = 	(!!test_bit(LED_KANA, dev->led) << 3) | (!!(test_bit(LED_COMPOSE, dev->led) << 3)) |
 		        (!!test_bit(LED_SCROLLL, dev->led) << 2) | (!!test_bit(LED_CAPSL, dev->led) << 1) |
 			(!!test_bit(LED_NUML, dev->led));
+	if (kbd->led_urb_submitted){
+		spin_unlock_irqrestore(&kbd->leds_lock, flags);
+		return 0;
+	}
+	if (*(kbd->leds) == kbd->newleds){
+		spin_unlock_irqrestore(&kbd->leds_lock, flags);
+		return 0;
+	}
+	*(kbd->leds) = kbd->newleds;
+	kbd->led->dev = kbd->usbdev;
+	if (usb_submit_urb(kbd->led, GFP_ATOMIC))
+		pr_err("usb_submit_urb(leds) failed\n");
+	else
+		kbd->led_urb_submitted = true;
+	spin_unlock_irqrestore(&kbd->leds_lock, flags);
+	
+	return 0;
 
 }
 static void usb_kbd_led(struct urb *urb){
 	unsigned long flags;
 	struct usb_kbd *kbd = urb->context;
+	pr_info("%s\n",__func__);
 	if(urb->status) ///* (return) non-ISO status */
 		hid_warn(urb->dev, "led urb status %d received\n",
 					 urb->status);
 	spin_lock_irqsave(&kbd->leds_lock, flags);
-       if*(kbd->leds)==
-
+       if(*(kbd->leds) == kbd->newleds){       /* IF LED will be on then make off */
+	       kbd->led_urb_submitted = false;
+	       spin_unlock_irqrestore(&kbd->leds_lock, flags);
+	       return ;
+	}
+       *(kbd->leds) = kbd->newleds;
+	kbd->led->dev = kbd->usbdev;
+	if (usb_submit_urb(kbd->led, GFP_ATOMIC)){
+		hid_err(urb->dev, "usb_submit_urb(leds) failed\n");
+		kbd->led_urb_submitted = false;
+	}
+	spin_unlock_irqrestore(&kbd->leds_lock, flags);
 }
 
 /**
@@ -196,6 +226,7 @@ static void usb_kbd_led(struct urb *urb){
 */
 static  int usb_kbd_open(struct input_dev *dev){
 	struct usb_kbd *kbd=input_get_drvdata(dev);
+	pr_info("%s\n",__func__);
 	kbd->irq->dev=kbd->usbdev;                  /*(in) pointer to associated device */
 	if(usb_submit_urb(kbd->irq,GFP_KERNEL))            /* Return:* 0 on successful submissions. A negative error number otherwise.*/
 		return -EIO;
@@ -211,6 +242,7 @@ static void usb_kbd_close(struct input_dev *dev)
 {
 	struct usb_kbd *kbd = input_get_drvdata(dev);
 
+	pr_info("%s\n",__func__);
 	usb_kill_urb(kbd->irq);
 }
 /**
@@ -253,6 +285,7 @@ static void usb_kbd_close(struct input_dev *dev)
  * When the buffer is no longer used, free it with usb_free_coherent().
  */
 static int  usb_kbd_alloc_mem(struct usb_device *dev, struct usb_kbd *kbd){
+	pr_info("%s\n",__func__);
 	if(!(kbd->irq = usb_alloc_urb(0, GFP_KERNEL)))
 		return -1;
 	if(!(kbd->led = usb_alloc_urb(0, GFP_KERNEL) ))
@@ -261,14 +294,16 @@ static int  usb_kbd_alloc_mem(struct usb_device *dev, struct usb_kbd *kbd){
 		return -1;
 	if(!(kbd->cr = kmalloc(sizeof(struct usb_ctrlrequest), GFP_KERNEL)))
 		return -1;
-	if(!(kbd->leds = usb_alloc_coherent(dev,1, GFP_ATOMIC, &kbd->leds_dma))	
-		retuen -1;
+	if(!(kbd->leds = usb_alloc_coherent(dev,1, GFP_ATOMIC, &kbd->leds_dma)))	
+		return -1;
+	return 0;
 }
 static void  usb_kbd_free_mem(struct usb_device *dev, struct usb_kbd *kbd){
+	pr_info("%s\n",__func__);
 	usb_free_urb(kbd->irq);
 	usb_free_urb(kbd->led);
 	usb_free_coherent(dev, 8, kbd->new, kbd->new_dma);
-	kfree(kbd->cr)
+	kfree(kbd->cr);
 	usb_free_coherent(dev,1, kbd->leds, kbd->leds_dma);
 } 
 
@@ -305,7 +340,6 @@ static void  usb_kbd_free_mem(struct usb_device *dev, struct usb_kbd *kbd){
 #define EV_CNT			(EV_MAX+1) */
 
 static int usb_kbd_probe(struct usb_interface *iface,const struct usb_device_id *id){
-	pr_info("%s: Invoked Probe function\n",__func__);
 	struct usb_device *dev=interface_to_usbdev(iface);     /* Convert data from a given struct usb_interface structure into struct usb_device structure*/
 	struct usb_host_interface *interface;                  
 	struct usb_endpoint_descriptor *endpoint;              /* Contains all of the USB-specific data in the exact format that the device itself specified.*/
@@ -324,6 +358,7 @@ static int usb_kbd_probe(struct usb_interface *iface,const struct usb_device_id 
 	/*usb_maxpacket(struct usb_device *udev, int pipe, int is_out)*/
 	maxp=usb_maxpacket(dev, pipe, usb_pipeout(pipe));     /* get endpoint's max packet size, */
 	kbd = kzalloc(sizeof(struct usb_kbd), GFP_KERNEL);
+	pr_info("%s: Invoked Probe function\n",__func__);
 /**
  * input_allocate_device - allocate memory for new input device
  *
@@ -339,16 +374,17 @@ static int usb_kbd_probe(struct usb_interface *iface,const struct usb_device_id 
 	if (usb_kbd_alloc_mem(dev, kbd))
 		 goto fail2;
 	kbd->usbdev=dev;
+	kbd->dev = input_dev;
 	spin_lock_init(&kbd->leds_lock);
 	if(dev->manufacturer)
 		strlcpy(kbd->name, dev->manufacturer, sizeof(kbd->name));
 	if(dev->product){
 		if(dev->manufacturer)
 			strlcat(kbd->name, " ", sizeof(kbd->name));
-`		strlcat(kbd->name, dev->product, sizeof(kbd->name));
+		strlcat(kbd->name, dev->product, sizeof(kbd->name));
 	}	
 	/*le16_to_cpu: To convert from little-endian format into the processor's native format you should use these functions*/
-	if(!strlen(dev->name))
+	if(!strlen(kbd->name))
 		snprintf(kbd->name, sizeof(kbd->name), "USB HIDBP Keyboard %04x:%04x", le16_to_cpu(dev->descriptor.idVendor), le16_to_cpu(dev->descriptor.idProduct)),
 /**
  * usb_make_path - returns stable device path in the usb tree
@@ -367,7 +403,7 @@ static int usb_kbd_probe(struct usb_interface *iface,const struct usb_device_id 
 	input_dev->dev.parent= &iface->dev;
 	input_set_drvdata(input_dev,kbd);
 	/*@evbit: bitmap of types of events supported by the device (EV_KEY, EV_REL, etc.)*/
-	input_dev->evbit[0]= BIT_MASK(EV_KEY) | BIT_MASK((EV_LED) | BIT_MASK(EV_REP);
+	input_dev->evbit[0]= BIT_MASK(EV_KEY) | BIT_MASK(EV_LED) | BIT_MASK(EV_REP);
 	/*@ledbit: bitmap of leds present on the device : Num Lock | Caps Lock | Scroll Lock|Compose|Kanai*/
 	input_dev->ledbit[0]= BIT_MASK(LED_NUML)|BIT_MASK(LED_CAPSL)|BIT_MASK(LED_SCROLLL)| BIT_MASK(LED_COMPOSE)|BIT_MASK(LED_KANA); 
 	/*static inline void set_bit(int nr, void *addr)*/
@@ -474,7 +510,16 @@ fail1:
 } 
 
 static void usb_kbd_disconnect(struct usb_interface *intf){
+	struct usb_kbd *kbd = usb_get_intfdata (intf);
 	pr_info("%s: Invoked Disconnect function\n",__func__);
+	usb_set_intfdata(intf, NULL);
+	if (kbd) {
+		usb_kill_urb(kbd->irq);
+		input_unregister_device(kbd->dev);
+		usb_kill_urb(kbd->led);
+		usb_kbd_free_mem(interface_to_usbdev(intf), kbd);
+		kfree(kbd);
+	}
 }
 /**
  * USB_INTERFACE_INFO - macro used to describe a class of usb interfaces
@@ -512,3 +557,5 @@ module_usb_driver(usb_kbd_driver);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Chandan Jha <beingchandanjha@gamil.com>");
 MODULE_DESCRIPTION("USB HID Boot Protocol keyboard driver");
+
+

@@ -381,6 +381,7 @@ fail1:
 static void usb_kbd_disconnect(struct usb_interface *intf)
 {
 	struct usb_kbd *kbd = usb_get_intfdata (intf);
+	pr_info("%s\n",__func__);
 
 	usb_set_intfdata(intf, NULL);
 	if (kbd) {
