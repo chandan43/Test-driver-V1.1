@@ -8,6 +8,10 @@
 #include <linux/slab.h>
 #include <linux/usb/input.h>
 #include <linux/hid.h>
+
+/*
+ * Conversion between standard USB scancodes and Linux HID core codes.
+*/
 static const unsigned char usb_kbd_keycode[256] = {
 	  0,  0,  0,  0, 30, 48, 46, 32, 18, 33, 34, 35, 23, 36, 37, 38,
 	 50, 49, 24, 25, 16, 19, 31, 20, 22, 47, 17, 45, 21, 44,  2,  3,
@@ -68,7 +72,23 @@ static struct usb_kbd {
 	spinlock_t leds_lock;
 	bool led_urb_submitted;
 };
-
+/*
+Byte  Description 
+0      Modifier       keys                                                                          
+1      Reserved       
+2      Keycode       1                                                                          
+3      Keycode       2                                                                          
+4      Keycode       3                                                                          
+5      Keycode       4                                                                          
+6      Keycode       5                                                                          
+7      Keycode       6                                                                          
+Byte 1 of this report is a constant. This byte is reserved for OEM use. The 
+BIOS should ignore this field if it is not used. Returning zeros in unused fields is 
+recommended. */
+/*
+ * Interrupt handler that receives a USB Request Block (URB) when the bound device interrupts.
+ * Key press data for this device is found in urb->context->new[2+]
+ */
 static void usb_kbd_irq(struct urb *urb){
 	struct usb_kbd *kbd = urb->context;			/*(in) context for completion */
 	int i;
@@ -85,12 +105,43 @@ static void usb_kbd_irq(struct urb *urb){
 			goto resubmit;
 	}
 	/*which upon every interrupt from the button checks its state and reports it via the input_report_key() call to the input system. */
-	/* input_event() - report new input event input_report_key(struct input_dev *dev, unsigned int code, int value)*/
+	/* input_event() - report new input event input_report_key(struct input_dev *dev, unsigned int code, int value)
+	
+	224 	225 	226 	227 	228 	229 	230 	231
+	LCtrl 	LShift 	LAlt 	LGUI 	RCtrl 	RShift 	RAlt 	RGUI 
+	*/
 	for(i=0;i<8;i++)
-		input_report_key(kbd->dev, usb_kbd_keycode[i + 224], (kbd->new[0] >> i) & 1); /*special character*/ 
+		input_report_key(kbd->dev, usb_kbd_keycode[i + 224], (kbd->new[0] >> i) & 1); /*224 + 8 character*/
+	//kbd->old[i] > 3 and kbd->new 2-7 does not contain kbd->old[i]
+        //if a scancode is in old and not in new
+        //RELEASE
+	/* memscan --  Find a character in an area of memory,returns the address of the first occurrence of c, or 1 byte past the area if c is not found */
 	for(i=2;i<8;i++){
-		if(kbd->old[i] > 3 && memscan(kbd->new + 2, kbd->old[i], 6) == kbd->new + 8)
+		if(kbd->old[i] > 3 && memscan(kbd->new + 2, kbd->old[i], 6) == kbd->new + 8){	
+			if(usb_kbd_keycode[kbd->old[i]])
+				input_report_key(kbd->dev, usb_kbd_keycode[kbd->old[i]], 0);  //release
+			else
+				hid_info(urb->dev,
+					 "Unknown key (scancode %#x) released.\n",
+					 kbd->old[i]);
+		}
+	//kbd->new[i] > 3 and kbc->old 2-7 does not contain kbd->new[i]
+        //if a scancode is in new and not in old
+        //PRESS
+		if(kbd->new[i] > 3 && memscan(kbd->old + 2, kbd->new[i], 6) == kbd->old + 8) {
+				if (usb_kbd_keycode[kbd->new[i]])
+					input_report_key(kbd->dev, usb_kbd_keycode[kbd->new[i]], 1); //input
+				else
+					hid_info(urb->dev,
+					 	"Unknown key (scancode %#x) pressed.\n",
+					 	kbd->new[i]);
+		}
 	}
+	//Tells the input systems the we are done sending data.
+	input_sync(kbd->dev);
+	//Copy data from new buffer to old buffer.  
+   	//Needed to compare previous state and register key releases.
+	memcpy(kbd->old, kbd->new, 8);
 resubmit:
 	i= usb_submit_urb(urb,GFP_ATOMIC);
 	if(i)
@@ -116,6 +167,16 @@ static int usb_kbd_event(struct input_dev *dev, unsigned int type, unsigned int 
 	kbd->newleds = 	(!!test_bit(LED_KANA, dev->led) << 3) | (!!(test_bit(LED_COMPOSE, dev->led) << 3))
 		        (!!test_bit(LED_SCROLLL, dev->led) << 2) | (!!test_bit(LED_CAPSL, dev->led) << 1) |
 			(!!test_bit(LED_NUML, dev->led));
+
+}
+static void usb_kbd_led(struct urb *urb){
+	unsigned long flags;
+	struct usb_kbd *kbd = urb->context;
+	if(urb->status) ///* (return) non-ISO status */
+		hid_warn(urb->dev, "led urb status %d received\n",
+					 urb->status);
+	spin_lock_irqsave(&kbd->leds_lock, flags);
+       if*(kbd->leds)==
 
 }
 
@@ -343,7 +404,66 @@ static int usb_kbd_probe(struct usb_interface *iface,const struct usb_device_id 
 */
 	usb_fill_int_urb(kbd->irq, dev, pipe,
 			 kbd->new, (maxp > 8 ? 8 : maxp),
-			 usb_kbd_irq, kbd, endpoint->bInterval); /*The bInterval value contains the polling interval for interrupt and isochronous endpoints*/	
+			 usb_kbd_irq, kbd, endpoint->bInterval); /*The bInterval value contains the polling interval for interrupt and isochronous endpoints*/
+	kbd->irq->transfer_dma = kbd->new_dma;
+	kbd->irq->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;     /* urb->transfer_dma valid on submit --(in) URB_SHORT_NOT_OK | */
+/**
+ * struct usb_ctrlrequest - SETUP data for a USB device control request
+ * @bRequestType: matches the USB bmRequestType field
+ * @bRequest: matches the USB bRequest field
+ * @wValue: matches the USB wValue field (le16 byte order)
+ * @wIndex: matches the USB wIndex field (le16 byte order)
+ * @wLength: matches the USB wLength field (le16 byte order)
+ */
+	/*https://www.pjrc.com/teensy/beta/usb20.pdf -pg 250*/
+	kbd->cr->bRequestType = USB_TYPE_CLASS | USB_RECIP_INTERFACE;
+	kbd->cr->bRequest= 0x09;             //set configuration
+	kbd->cr->wValue = cpu_to_le16(0x200);
+	kbd->cr->wIndex = cpu_to_le16(interface->desc.bInterfaceNumber);
+	kbd->cr->wLength = cpu_to_le16(1);
+/**
+ * usb_fill_control_urb - initializes a control urb
+ * @urb: pointer to the urb to initialize.
+ * @dev: pointer to the struct usb_device for this urb.
+ * @pipe: the endpoint pipe
+ * @setup_packet: pointer to the setup_packet buffer
+ * @transfer_buffer: pointer to the transfer buffer
+ * @buffer_length: length of the transfer buffer
+ * @complete_fn: pointer to the usb_complete_t function
+ * @context: what to set the urb context to.
+ *
+ * Initializes a control urb with the proper information needed to submit
+ * it to a device.
+ */
+	usb_fill_control_urb(kbd->led, dev, usb_sndctrlpipe(dev, 0),
+			     (void *) kbd->cr, kbd->leds, 1,
+			     usb_kbd_led, kbd);
+	kbd->led->transfer_dma = kbd->leds_dma;
+	kbd->led->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
+
+/**
+ * input_register_device - register device with input core
+ * @dev: device to be registered
+ *
+ * This function registers device with input core. The device must be
+ * allocated with input_allocate_device() and all it's capabilities
+ * set up before registering.
+ * If function fails the device must be freed with input_free_device().
+ * Once device has been successfully registered it can be unregistered
+ * with input_unregister_device(); input_free_device() should not be
+ * called in this case.
+*/	
+	error = input_register_device(kbd->dev);
+	if(error)
+		goto fail2;
+	/*Because the USB driver needs to retrieve the local data structure that is associated with this struct usb_interface 
+	later in the lifecycle of the device, the function usb_set_intfdata can be called:*/
+	usb_set_intfdata(iface, kbd);  // Set interface data;
+/**
+ * device_set_wakeup_enable - Enable or disable a device to wake up the system.
+ * @dev: Device to handle.
+ */
+	device_set_wakeup_enable(&dev->dev, 1);
 	return 0;
 fail2:
 	usb_kbd_free_mem(dev, kbd);
