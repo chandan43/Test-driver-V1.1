@@ -2,7 +2,9 @@
 #obj-m+=chardev_minor.o
 #obj-m+=charioctl.o
 #obj-m+=chardrv_ioctl.o
-obj-m+=chardev_sync.o
+#obj-m+=chardev_sync.o
+#obj-m+=chardrv_lock.o
+obj-m+=chardrv_seqlock.o
 
 KDIR=/lib/modules/$(shell uname -r)/build
 
