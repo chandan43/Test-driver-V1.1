@@ -6,7 +6,7 @@ Step 1: Download uboot source code for beaglebone from denx.de website.
 	Download using cmdline: 
 	#wget ftp.denx.de/pub/u-boot/u-boot-2017.05.tar.bz2
 	#tar -xvf u-boot-2017.05.tar.bz2
-	#cd buildroot-2017.08.1
+	#cd u-boot-2017.05 
 Step 2: Find hardware support :
 	Find Config file for target board(For Our case Beagal bone black). 
 	#cd configs/

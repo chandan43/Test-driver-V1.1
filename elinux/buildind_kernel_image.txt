@@ -1,0 +1,23 @@
+Building kernel image:
+Step 1: Download longterm supported kernel sources form https://www.kernel.org/
+	For my case linux-4.4.96.tar.xz
+	# tar xf linux-4.4.96.tar.xz
+	# cd linux-4.4.96
+Step 2: Verify Board support :
+	#make ARCH=arm help    # This one will tell you config file for Board specific or SOC 
+	omap2plus_defconfig for beagle bone board. 
+	
+Step 3: Apply board Config:
+	# make ARCH=arm omap2plus_defconfig 
+	On success: # configuration written to .config
+
+Step 4: Set cross tool chain :
+	PATH=$PATH:/home/elinux/buildroot-2017.08.1/output/host/usr/bin
+Step 5: Initiate Compile and build :
+	make ARCH=arm CROSS_COMPILE=arm-linux- LOADADDR=0x82000000 uImage
+	On success: # Loadable kernel image (uImage) will be available on arch/arm/boot folder
+Step 6: Build device tree image :
+	#make ARCH=arm CROSS_COMPILE=arm-linux- dtbs 
+	On success: arch/arm/boot/dts
+
+	
