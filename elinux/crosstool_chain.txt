@@ -1,0 +1,82 @@
+Building a cross tool chain through buildroot fram work :
+
+Step 1: Download recent buildroot sources package from buildroot.org : 
+	The buildroot repository can be browsed online through cgit at 
+	http://git.buildroot.net/buildroot. 
+	# git clone git://git.buildroot.net/buildroot
+	 
+	Download using cmdline : 
+	# wget https://buildroot.org/downloads/buildroot-2017.08.1.tar.bz2	
+	# tar -xvf  buildroot-2017.08.1.tar.bz2
+	# cd buildroot-2017.08.1
+
+Step 2: Verify hardware support (Target board and SOC) :
+	Find Config file for target board(For Our case Beagal bone black). 
+	#cd configs/
+	For beaglebone case :- beaglebone_defconfig
+
+Step 3: Apply the config choosen :
+	# cd ../       # go to parent Directory i.e buildroot-2017.08.1
+	#make beaglebone_defconfig
+Step 4: Customize configuration:
+	#make menuconfig
+	Note: Some time "make menuconfig" gives errors which is mentioned bellow 
+	     *** Unable to find the ncurses libraries or the
+	Solution : sudo apt-get install libncurses-dev 
+		   and run again make menuconfig
+		#make menuconfig
+	Target options  --->        (Board specific configuration no need to change)
+	Build options  --->
+        Toolchain  --->
+        System configuration  --->
+	Kernel  --->
+	Target packages  --->
+	Filesystem images  --->
+	Bootloaders  --->
+	Host utilities  --->
+	Legacy config options  --->
+	Note: Here we are not going to change any setting apart from Toolchain. 
+	Toolchain  --->
+
+                             Toolchain type (Buildroot toolchain)  --->                                                                                           
+                             *** Toolchain Buildroot Options ***                                                                                                  
+                         (buildroot) custom toolchain vendor name                                                                                                 
+                             C library (uClibc-ng)  --->                                                                                                          
+                             *** Kernel Header Options ***                                                                                                        
+                             Kernel Headers (Manually specified Linux version)  --->                                                                              
+                         (4.4.43) linux version                                                                                                                   
+                             Custom kernel headers series (4.4.x)  --->                                                                                           
+                             *** uClibc Options ***                                                                                                               
+                         (package/uclibc/uClibc-ng.config) uClibc configuration file to use?                                                                      
+                         ()  Additional uClibc configuration fragment files                                                                                       
+                         [*] Enable WCHAR support                                                                                                                 
+                         [ ] Enable toolchain locale/i18n support                                                                                                 
+                             Thread library implementation (Native POSIX Threading (NPTL))  --->                                                                  
+                         [ ] Thread library debugging                                                                                                             
+                         [ ] Enable stack protection support                                                                                                      
+                         [*] Compile and install uClibc utilities                                                                                                 
+                             *** Binutils Options ***                                                                                                             
+                             Binutils Version (binutils 2.28.1)  --->                                                                                             
+                         ()  Additional binutils options                                                                                                          
+                             *** GCC Options ***                                                                                                                  
+                             GCC compiler Version (gcc 6.x)  --->                                                                                                 
+                         ()  Additional gcc options                                                                                                               
+                         [*] Enable C++ support                                                                                                                   
+                         [ ] Enable Fortran support                                                                                                               
+                         [ ] Enable compiler link-time-optimization support                                                                                       
+                         [ ] Enable compiler OpenMP support                                                                                                       
+                         [ ] Enable graphite support                                                                                                              
+                             *** Host GDB Options ***                                                                                                             
+                         [ ] Build cross gdb for the host                                                                                                         
+                             *** Toolchain Generic Options ***                                                                                                    
+                         [*] Enable MMU support                                                                                                                   
+                         ()  Target Optimizations                                                                                                                 
+                         ()  Target linker options                                                                                                                
+                         [ ] Register toolchain within Eclipse Buildroot plug-in
+
+Step 5:  Initiate Tool chain built : 
+	# make toolchain
+	After Successful complition of all above mentioned steps  dl folder will create,
+	which contains selected package which was configured in step 4 and tool chain will
+	be available buildroot-2017.08.1/output/host/usr/bin folder.
+  
