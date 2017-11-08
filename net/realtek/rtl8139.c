@@ -589,6 +589,8 @@ MODULE_PARM_DESC (multicast_filter_limit, "8139too maximum number of filtered mu
 MODULE_PARM_DESC (media, "8139too: Bits 4+9: force full duplex, bit 5: 100Mbps");
 MODULE_PARM_DESC (full_duplex, "8139too: Force full duplex for board(s) (1)");
 
+
+static int read_eeprom (void __iomem *ioaddr, int location, int addr_len);
 /* write MMIO register, with flush */
 /* Flush avoids rtl8139 bug w/ posted MMIO writes */
 #define RTL_W8_F(reg, val8)	do { iowrite8 ((val8), ioaddr + (reg)); ioread8 (ioaddr + (reg)); } while (0)
@@ -888,7 +890,9 @@ static int  rtl8139_init_one(struct pci_dev *pdev, const struct pci_device_id *e
 	tp = netdev_priv(dev);
 	tp->dev = dev;
 	ioaddr = tp->mmio_addr;
-	assert (ioaddr != NULL);	
+	assert (ioaddr != NULL);
+	addr_len = read_eeprom (ioaddr, 0, 8) == 0x8129 ? 8 : 6;
+		
 	return 0;
 }
 static void rtl8139_remove_one(struct pci_dev *dev)
@@ -922,6 +926,39 @@ static void rtl8139_remove_one(struct pci_dev *dev)
 #define EE_READ_CMD	(6)
 #define EE_ERASE_CMD	(7)
 
+static int read_eeprom(void __iomem *ioaddr, int location, int addr_len)
+{
+	int i;
+	unsigned retval = 0;
+	int read_cmd = location | (EE_READ_CMD << addr_len);
+	/* Shift the read command bits out. */
+	for (i = 4 + addr_len; i >= 0; i--) {
+		int dataval = (read_cmd & (1 << i)) ? EE_DATA_WRITE : 0;
+		RTL_W8 (Cfg9346, EE_ENB | dataval);
+		eeprom_delay ();
+		RTL_W8 (Cfg9346, EE_ENB | dataval | EE_SHIFT_CLK);
+		eeprom_delay ();
+	}
+	RTL_W8 (Cfg9346, EE_ENB);
+	eeprom_delay ();
+
+	for (i = 16; i > 0; i--) {
+		RTL_W8 (Cfg9346, EE_ENB | EE_SHIFT_CLK);
+		eeprom_delay ();
+		retval =
+		    (retval << 1) | ((RTL_R8 (Cfg9346) & EE_DATA_READ) ? 1 :
+				     0);
+		RTL_W8 (Cfg9346, EE_ENB);
+		eeprom_delay ();
+	}
+
+	/* Terminate the EEPROM access. */
+	RTL_W8(Cfg9346, 0);
+	eeprom_delay ();
+
+	return retval;
+
+}
 static struct pci_driver rtl8139_pci_driver = {
 	.name           = DRV_NAME,
 	.id_table	= rtl8139_pci_tbl,
