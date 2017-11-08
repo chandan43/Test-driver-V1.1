@@ -2,7 +2,9 @@
 #include <linux/init.h>
 #include <linux/compiler.h>
 #include <linux/pci.h>
+#include <linux/etherdevice.h>
 #include <linux/netdevice.h>
+#include <linux/ethtool.h>
 #include <linux/if_vlan.h>
 
 #define DRV_NAME	"realtek8139"
@@ -638,7 +640,207 @@ static const unsigned int rtl8139_rx_config =
 /* rtl8139_tx_config : TxIFG96 () | (TX_DMA_BURST (6)<< TxDMAShift(8)) i.e 1024 | TX_RETRY(8 = 1000) << TxRetryShift (4) : retry =16*/
 static const unsigned int rtl8139_tx_config =
 	TxIFG96 | (TX_DMA_BURST << TxDMAShift) | (TX_RETRY << TxRetryShift);
+/*
+ -pci_release_regions: Release reserved PCI I/O and memory resources,Releases all PCI I/O and memory resources previously reserved by a successful call to pci_request_regions. Call this   function only after all use of the PCI regions has ceased.   
+*/
+/**
+ * free_netdev - free network device
+ * @dev: device
+ *
+ * This function does the last stage of destroying an allocated device
+ * interface. The reference to the device object is released. If this
+ * is the last reference then it will be freed.Must be called in process
+ * context.
+ */
+static void __rtl8139_cleanup_dev (struct net_device *dev)
+{
+	struct rtl8139_private *tp = netdev_priv(dev);
+	struct pci_dev *pdev;
+	assert (dev != NULL);
+	assert (tp->pci_dev != NULL);
+	pdev = tp->pci_dev;
+	/*Before release pci region we have to unmap */
+	if (tp->mmio_addr)
+		pci_iounmap (pdev, tp->mmio_addr);
+	/* it's ok to call this even if we have no regions to free */
+	pci_release_regions (pdev);
 
+	free_netdev(dev);
+	
+}
+static void rtl8139_chip_reset (void __iomem *ioaddr)
+{
+	int i;
+	
+	/* Soft reset the chip. */
+	RTL_W8 (ChipCmd, CmdReset);
+	/* Check that the chip has finished the reset. */
+	/* the memory barrier is needed to ensure that the reset happen in the expected order.*/
+	for (i = 1000; i > 0; i--) {
+		barrier();
+		if ((RTL_R8 (ChipCmd) & CmdReset) == 0)
+			break;
+		udelay (10);
+	}
+}
+/*
+  -alloc_etherdev: Allocates and sets up an Ethernet device , Fill in the fields of the device structure with Ethernet-generic values. Basically does everything except registering the 
+   device. Constructs a new net device, complete with a private data area of size (sizeof_priv). A 32-byte (not bit) alignment is enforced for this private data area. 
+  -SET_NETDEV_DEV: Set the sysfs physical device reference for the network logical device if set prior to registration will cause a symlink during initialization.
+   SET_NETDEV_DEV (net, pdev): Sets the parent of the 
+  -dev member of the specified  network device to be that specified device (the second argument,  pdev). With virtual devices, you do not call the SET_NETDEV_DEV() macro. As a result, 
+   entries for these virtual devices are created under /sys/devices/virtual/net 
+   The SET_NETDEV_DEV() macro should be called before calling the  register_netdev() method.
+ - netdev_priv - access network device private data
+   @dev: network device ,Get network device private data
+ - pci_enable_device — Initialize device before it's used by a driver.Ask low-level code to enable I/O and memory. Wake up the device if it was suspended. Beware, this function can fail.
+   Note we don't actually enable the device many times if we call this function repeatedly (we just increment the count). 
+ - pci_request_regions — Reserved PCI I/O and memory resources , Mark all PCI regions associated with PCI device pdev as being reserved by owner res_name. Do not access any address 
+   inside the PCI regions unless this call returns successfully. Returns 0 on success, or EBUSY on error. A warning message is also printed on failure.
+ - pci_set_master — enables bus-mastering for device dev , Enables bus-mastering on the device and calls pcibios_set_master to do the needed arch specific settings. 
+ - u64_stats_init: static inline void u64_stats_init(struct u64_stats_sync *syncp) : seqcount reads sequence entries and reports the number of entries found.  
+ - pci_resource_len() :Returns the byte length of a PCI region 
+*/
+/* #define IORESOURCE_IO           0x00000100      PCI/ISA I/O ports    */
+/* #define IORESOURCE_MEM          0x00000200             */
+/*
+	Step 1: alloc_etherdev
+	Step 2: if success step 1 , then SET_NETDEV_DEV   //optional
+	Step 3: Access network device private data and set device 
+	Step 4: Enable device using pci_enable_device , Reserved PCI I/O and memory using pci_request_regions , set master pci_set_master using bus-mastering for device dev 
+	Step 5: Check device config and init. 
+*/	
+static struct net_device *rtl8139_init_board(struct pci_dev *pdev)
+{
+	struct device *d = &pdev->dev;
+	void __iomem *ioaddr;
+	struct net_device *dev;
+	struct rtl8139_private *tp;   /*private data*/
+	u8 tmp8;
+	int rc, disable_dev_on_err = 0;
+	unsigned int i, bar;
+	unsigned long io_len;
+	u32 version;
+	static const struct {
+		unsigned long mask;
+		char *type;
+	} res[] = {
+		{ IORESOURCE_IO,  "PIO" },
+		{ IORESOURCE_MEM, "MMIO" }
+	};
+
+	assert (pdev != NULL);
+	
+	/* dev and priv zeroed in alloc_etherdev */
+	dev = alloc_etherdev (sizeof (*tp));
+	if(dev == NULL)
+		return ERR_PTR(-ENOMEM);
+	/*As a result,entries for these virtual devices are created under /sys/devices/virtual/net*/
+	SET_NETDEV_DEV(dev, &pdev->dev);  
+	tp = netdev_priv(dev);
+	tp->pci_dev = pdev;	
+	/* enable device (incl. PCI PM wakeup and hotplug setup) */
+	rc = pci_enable_device (pdev);
+	if (rc)
+		goto err_out;
+	disable_dev_on_err = 1;
+	rc = pci_request_regions (pdev, DRV_NAME);
+	if (rc)
+		goto err_out;
+	pci_set_master (pdev);
+	u64_stats_init(&tp->rx_stats.syncp);
+	u64_stats_init(&tp->tx_stats.syncp);
+retry:
+	/* PIO bar register comes first. */
+	bar = !use_io;
+	io_len = pci_resource_len(pdev, bar);
+	dev_dbg(d, "%s region size = 0x%02lX\n", res[bar].type, io_len);
+	/*pci_resource_flags : This function returns the flags associated with this resource */
+	if (!(pci_resource_flags(pdev, bar) & res[bar].mask)) {
+		dev_err(d, "region #%d not a %s resource, aborting\n", bar,
+			res[bar].type);
+		rc = -ENODEV;
+		goto err_out;
+	}
+	if (io_len < RTL_MIN_IO_SIZE) {
+		dev_err(d, "Invalid PCI %s region size(s), aborting\n",
+			res[bar].type);
+		rc = -ENODEV;
+		goto err_out;
+	}
+	/* Create a virtual mapping cookie for a PCI BAR (memory or IO) */
+	ioaddr = pci_iomap(pdev, bar, 0);
+	if (!ioaddr) {
+		dev_err(d, "cannot map %s\n", res[bar].type);
+		if (!use_io) {
+			use_io = true;
+			goto retry;
+		}
+		rc = -ENODEV;
+		goto err_out;
+	}
+	tp->regs_len = io_len;
+	tp->mmio_addr = ioaddr;
+	
+	/* Bring old chips out of low-power mode. */
+	RTL_W8 (HltClk, 'R');
+	/* check for missing/broken hardware */
+	if (RTL_R32 (TxConfig) == 0xFFFFFFFF) {
+		dev_err(&pdev->dev, "Chip not responding, ignoring board\n");
+		rc = -EIO;
+		goto err_out;
+	}
+	/* identify chip attached to board */
+	version = RTL_R32 (TxConfig) & HW_REVID_MASK;
+	for (i = 0; i < ARRAY_SIZE (rtl_chip_info); i++)
+		if (version == rtl_chip_info[i].version) {
+			tp->chipset = i;
+			goto match;
+		}
+	/* if unknown chip, assume array element #0, original RTL-8139 in this case */
+	i = 0;
+	dev_dbg(&pdev->dev, "unknown chip version, assuming RTL-8139\n");
+	dev_dbg(&pdev->dev, "TxConfig = 0x%x\n", RTL_R32 (TxConfig));
+	tp->chipset = 0;
+
+match:
+	pr_debug("chipset id (%d) == index %d, '%s'\n",
+		 version, i, rtl_chip_info[i].name);
+	if(tp->chipset >=  CH_8139B){
+		u8 new_tmp8 = tmp8 = RTL_R8 (Config1);
+		pr_debug("PCI PM wakeup\n");
+		if ((rtl_chip_info[tp->chipset].flags & HasLWake) &&
+		    (tmp8 & LWAKE))
+			new_tmp8 &= ~LWAKE;             /*Removing LWAKE bit from new_tmp8*/
+			new_tmp8 |= Cfg1_PM_Enable;      /*Enable power Management*/
+			if(new_tmp8 != tmp8 ){
+				RTL_W8 (Cfg9346, Cfg9346_Unlock);	
+				RTL_W8 (Config1, tmp8);
+				RTL_W8 (Cfg9346, Cfg9346_Lock);	
+			}
+			if (rtl_chip_info[tp->chipset].flags & HasLWake) {
+				tmp8 = RTL_R8 (Config4);
+				if (tmp8 & LWPTN) {
+					RTL_W8 (Cfg9346, Cfg9346_Unlock);
+					RTL_W8 (Config4, tmp8 & ~LWPTN);
+					RTL_W8 (Cfg9346, Cfg9346_Lock);
+				}
+			}
+						
+	}else{
+		pr_debug("Old chip wakeup\n");
+		tmp8 = RTL_R8 (Config1);
+		tmp8 &= ~(SLEEP | PWRDN);
+		RTL_W8 (Config1, tmp8);
+	}
+	rtl8139_chip_reset (ioaddr);
+	return dev;	
+err_out:
+	__rtl8139_cleanup_dev (dev);
+	if (disable_dev_on_err)
+		pci_disable_device (pdev);
+	return ERR_PTR(rc);
+}
 /* New device inserted : probe function -*/
 static int  rtl8139_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
@@ -661,21 +863,65 @@ static int  rtl8139_init_one(struct pci_dev *pdev, const struct pci_device_id *e
 			pr_info(RTL8139_DRIVER_NAME "\n");
 	}
 #endif
-	/*pdev->revision:  0x20 for enhanced 8139C+ version*/ 
+	/*pdev->revision:  0x20 for enhanced 8139C+ version, revision for realtek card is less then 0x20 */ 
 	if(pdev->vendor == PCI_VENDOR_ID_REALTEK && 
 		pdev->device == PCI_DEVICE_ID_REALTEK_8139 && pdev->revision >= 0x20){
 		dev_info(&pdev->dev,
-			   "This (id %04x:%04x rev %02x) is an enhanced 8139C+ chip, use 8139cp\n",
+			   "this (id %04x:%04x rev %02x) is an enhanced 8139c+ chip, use 8139cp\n",
 		       	   pdev->vendor, pdev->device, pdev->revision);
 		return -ENODEV;
 	}
-		
+	if (pdev->vendor == PCI_VENDOR_ID_REALTEK &&
+	    pdev->device == PCI_DEVICE_ID_REALTEK_8139 &&
+	    pdev->subsystem_vendor == PCI_VENDOR_ID_ATHEROS &&
+	    pdev->subsystem_device == PCI_DEVICE_ID_REALTEK_8139) {
+		pr_info("OQO Model 2 detected. Forcing PIO\n");
+		dev_info(&pdev->dev,
+			   "This (id %04x:%04x rev %02x) detected.\n",
+		       	   pdev->vendor, pdev->device, pdev->revision);
+		use_io = 1;
+	}
+	dev = rtl8139_init_board (pdev);
+	if (IS_ERR(dev))
+		return PTR_ERR(dev);
+	assert (dev != NULL);
+	tp = netdev_priv(dev);
+	tp->dev = dev;
+	ioaddr = tp->mmio_addr;
+	assert (ioaddr != NULL);	
 	return 0;
 }
 static void rtl8139_remove_one(struct pci_dev *dev)
 {
 	pr_info("%s: device removed safly\n",__func__);
 }
+/* Serial EEPROM section. */
+/* 93C46 Command Register :
+	Bit 7-6, R/W EEM1-0  , 1 0 : 93C46 programming: In this mode, both network and host bus master operations are disabled. The 93C46 can be directly accessed via bit3-0 
+	which now reflect the states of EECS, EESK, EEDI, & EEDO pins respectively.
+	EE_CS  		  : Bit 3 W/R EECS  
+	EE_SHIFT_CLK      : Bit 2 W/R EESK
+	EE_DATA_WRITE     : Bit 1 W/R EEDI : EEPROM chip data in
+	EE_DATA_READ      : Bit 0 W/R EEDO : EEPROM chip data out 
+ */
+/*  EEPROM_Ctrl bits. */
+#define EE_SHIFT_CLK	0x04	/* EEPROM shift clock. */
+#define EE_CS		0x08	/* EEPROM chip select. */
+#define EE_DATA_WRITE	0x02	/* EEPROM chip data in. */
+#define EE_WRITE_0	0x00
+#define EE_WRITE_1	0x02
+#define EE_DATA_READ	0x01	/* EEPROM chip data out. */
+#define EE_ENB	(0x80 | EE_CS)  /* EECS | Operating Mode (EEM1-0) i.e 93C46 programming:*/
+/* Delay between EEPROM clock transitions.
+   No extra delay is needed with 33Mhz PCI, but 66Mhz may change this.
+ */
+#define eeprom_delay()	(void)RTL_R8(Cfg9346)
+
+/* The EEPROM commands include the alway-set leading bit. */
+#define EE_WRITE_CMD	(5)
+#define EE_READ_CMD	(6)
+#define EE_ERASE_CMD	(7)
+
 static struct pci_driver rtl8139_pci_driver = {
 	.name           = DRV_NAME,
 	.id_table	= rtl8139_pci_tbl,
