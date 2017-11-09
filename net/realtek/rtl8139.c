@@ -843,6 +843,24 @@ err_out:
 		pci_disable_device (pdev);
 	return ERR_PTR(rc);
 }
+
+static const struct net_device_ops rtl8139_netdev_ops = {
+	.ndo_open		= rtl8139_open,
+	.ndo_stop		= rtl8139_close,
+	.ndo_get_stats64	= rtl8139_get_stats64,
+	.ndo_change_mtu		= rtl8139_change_mtu,
+	.ndo_validate_addr	= eth_validate_addr,
+	.ndo_set_mac_address 	= rtl8139_set_mac_address,
+	.ndo_start_xmit		= rtl8139_start_xmit,
+	.ndo_set_rx_mode	= rtl8139_set_rx_mode,
+	.ndo_do_ioctl		= netdev_ioctl,
+	.ndo_tx_timeout		= rtl8139_tx_timeout,
+#ifdef CONFIG_NET_POLL_CONTROLLER
+	.ndo_poll_controller	= rtl8139_poll_controller,
+#endif
+	.ndo_set_features	= rtl8139_set_features,
+};
+
 /* New device inserted : probe function -*/
 static int  rtl8139_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
@@ -892,7 +910,17 @@ static int  rtl8139_init_one(struct pci_dev *pdev, const struct pci_device_id *e
 	ioaddr = tp->mmio_addr;
 	assert (ioaddr != NULL);
 	addr_len = read_eeprom (ioaddr, 0, 8) == 0x8129 ? 8 : 6;
-		
+	/* Interface address info used in eth_type_trans() */
+	/* unsigned char		*dev_addr;	hw address, (before bcast because most packets are unicast) */
+	for (i = 0; i < 3; i++)
+		((__le16 *) (dev->dev_addr))[i] =
+		    cpu_to_le16(read_eeprom (ioaddr, i + 7, addr_len));
+	/* The Rtl8139-specific entries in the device structure. */
+	dev->netdev_ops = &rtl8139_netdev_ops;
+	dev->ethtool_ops = &rtl8139_ethtool_ops;
+	dev->watchdog_timeo = TX_TIMEOUT;
+	netif_napi_add(dev, &tp->napi, rtl8139_poll, 64)	
+	
 	return 0;
 }
 static void rtl8139_remove_one(struct pci_dev *dev)
@@ -958,6 +986,47 @@ static int read_eeprom(void __iomem *ioaddr, int location, int addr_len)
 
 	return retval;
 
+}
+
+static int rtl8139_open (struct net_device *dev)
+{
+	struct rtl8139_private *tp = netdev_priv(dev);
+	void __iomem *ioaddr = tp->mmio_addr;
+	const int irq = tp->pci_dev->irq;
+	int retval;
+	retval = request_irq(irq, rtl8139_interrupt, IRQF_SHARED, dev->name, dev);
+	if (retval)
+		return retval;
+		
+}
+/* The interrupt handler does all of the Rx thread work and cleans up
+   after the Tx thread. */
+static irqreturn_t rtl8139_interrupt (int irq, void *dev_instance)
+{
+	struct net_device *dev = (struct net_device *) dev_instance;
+	struct rtl8139_private *tp = netdev_priv(dev);
+	void __iomem *ioaddr = tp->mmio_addr;
+	u16 status, ackstat;
+	int link_changed = 0; /* avoid bogus "uninit" warning */
+	int handled = 0;
+	spin_lock (&tp->lock);
+	status = RTL_R16 (IntrStatus);
+	/* shared irq? */
+	if (unlikely((status & rtl8139_intr_mask) == 0))
+		goto out;
+	ndled = 1;	
+	/* h/w no longer present (hotplug?) or major error, bail */
+	if (unlikely(status == 0xFFFF))
+		goto out;
+	/* close possible race's with dev_close netif_running - test if up*/
+	if (unlikely(!netif_running(dev))) {
+		RTL_W16 (IntrMask, 0);
+		goto out;
+	}
+	/* Acknowledge all of the current interrupt sources ASAP, but
+	   an first get an additional status bit from CSCR. */
+	if (unlikely(status & RxUnderrun))
+		link_changed = RTL_R16 (CSCR) & CSCR_LinkChangeBit;	
 }
 static struct pci_driver rtl8139_pci_driver = {
 	.name           = DRV_NAME,
