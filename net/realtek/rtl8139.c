@@ -997,8 +997,136 @@ static int rtl8139_open (struct net_device *dev)
 	retval = request_irq(irq, rtl8139_interrupt, IRQF_SHARED, dev->name, dev);
 	if (retval)
 		return retval;
+	
 		
 }
+/*
+mb()
+	A full system memory barrier. All memory operations before the mb() in the instruction stream will be committed before any operations after the mb() are committed. This ordering 	 will be visible to all bus masters in the system. It will also ensure the order in which accesses from a single processor reaches slave devices.
+rmb()
+	Like mb(), but only guarantees ordering between read accesses. That is, all read operations before an rmb() will be committed before any read operations after the rmb().
+wmb()
+	Like mb(), but only guarantees ordering between write accesses. That is, all write operations before a wmb() will be committed before any write operations after the wmb().
+*/
+
+/**
+ *	netif_wake_queue - restart transmit
+ *	@dev: network device
+ *
+ *	Allow upper layers to call the device hard_start_xmit routine.
+ *	Used for flow control when transmit resources are available.
+ */
+
+static void rtl8139_tx_interrupt (struct net_device *dev,
+				  struct rtl8139_private *tp,
+				  void __iomem *ioaddr)
+{
+	unsigned long dirty_tx, tx_left;
+	assert (dev != NULL);
+	assert (ioaddr != NULL);
+
+	dirty_tx = tp->dirty_tx;
+	tx_left = tp->cur_tx - dirty_tx;
+	while (tx_left > 0) {
+		int entry = dirty_tx % NUM_TX_DESC;
+		int txstatus;
+		txstatus = RTL_R32 (TxStatus0 + (entry * sizeof (u32)));  /* TxStatus0 + entry(0-3) * discriptor size*/
+		if (!(txstatus & (TxStatOK | TxUnderrun | TxAborted)))
+			break;	/* It still hasn't been Txed */
+		/* Note: TxCarrierLost is always asserted at 100mbps. */
+		if (txstatus & (TxOutOfWindow | TxAborted)) {
+			/* There was an major error, log it. */
+			netif_dbg(tp, tx_err, dev, "Transmit error, Tx status %08x\n",
+				  txstatus);
+			dev->stats.tx_errors++;
+			if (txstatus & TxAborted) {
+				dev->stats.tx_aborted_errors++;
+				RTL_W32 (TxConfig, TxClearAbt);
+				RTL_W16 (IntrStatus, TxErr);
+				wmb();                                    /*The wmb() macro does: prevent reordering of the stores. */
+			}
+			if (txstatus & TxCarrierLost)
+				dev->stats.tx_carrier_errors++;
+			if (txstatus & TxOutOfWindow)
+				dev->stats.tx_window_errors++;
+		} else {
+			if (txstatus & TxUnderrun) {
+				/* Add 64 to the Tx FIFO threshold. */
+				if (tp->tx_flag < 0x00300000)      /*if Collision Count*/
+					tp->tx_flag += 0x00020000; /*Threshold level in the Tx FIFO is increased*/
+				dev->stats.tx_fifo_errors++;
+			}
+			dev->stats.collisions += (txstatus >> 24) & 15;  /*right shit 24 times i.e Number of Collision Count & (0001(collision signal)0101 (Collision Count) ) i.e 15*/
+			u64_stats_update_begin(&tp->tx_stats.syncp);     /*seq count of packet lock*/ 
+			tp->tx_stats.packets++;				 /*packets update */
+			tp->tx_stats.bytes += txstatus & 0x7ff;          /*0-11 bits for The total size in bytes of the data in this descriptor*/
+			u64_stats_update_end(&tp->tx_stats.syncp);       /* seq count of packet unlock*/
+		}
+		dirty_tx++;
+		tx_left--;
+	}
+#ifndef RTL8139_NDEBUG
+	if (tp->cur_tx - dirty_tx > NUM_TX_DESC) {
+		netdev_err(dev, "Out-of-sync dirty pointer, %ld vs. %ld\n",
+			   dirty_tx, tp->cur_tx);
+		dirty_tx += NUM_TX_DESC;
+	}
+#endif /* RTL8139_NDEBUG */
+	/* only wake the queue if we did work, and the queue is stopped */
+	if (tp->dirty_tx != dirty_tx) {
+		tp->dirty_tx = dirty_tx;
+		mb();
+		netif_wake_queue (dev); /* restart transmit */
+	} 
+}
+static void rtl8139_weird_interrupt (struct net_device *dev,
+				     struct rtl8139_private *tp,
+				     void __iomem *ioaddr,
+				     int status, int link_changed)
+{
+	netdev_dbg(dev, "Abnormal interrupt, status %08x\n", status);	
+	assert (dev != NULL);
+	assert (tp != NULL);
+	assert (ioaddr != NULL);
+	/* Update the error count. */
+	dev->stats.rx_missed_errors += RTL_R32 (RxMissed);
+	RTL_W32 (RxMissed, 0);
+	if ((status & RxUnderrun) && link_changed &&
+	    (tp->drv_flags & HAS_LNK_CHNG)) {
+		rtl_check_media(dev, 0);              // TODO :-->
+		status &= ~RxUnderrun;
+	}
+	if (status & (RxUnderrun | RxErr))
+		dev->stats.rx_errors++;
+	if (status & PCSTimeout)
+		dev->stats.rx_length_errors++
+	if (status & RxUnderrun)
+		dev->stats.rx_fifo_errors++;
+	if (status & PCIErr) {
+		u16 pci_cmd_status;
+		pci_read_config_word (tp->pci_dev, PCI_STATUS, &pci_cmd_status);
+		pci_write_config_word (tp->pci_dev, PCI_STATUS, pci_cmd_status);
+
+		netdev_err(dev, "PCI Bus error %04x\n", pci_cmd_status);
+	}
+}/* close rtl8139_weird_interrupt */
+
+/**
+ *	napi_schedule_prep - check if napi can be scheduled
+ *	@n: napi context
+ *
+ * Test if NAPI routine is already running, and if not mark
+ * it as running.  This is used as a condition variable
+ * insure only one NAPI poll instance runs.  We also make
+ * sure there is no pending NAPI disable.
+ */
+/**
+ *	napi_schedule - schedule NAPI poll
+ *	@n: napi context
+ *
+ * Schedule NAPI poll routine to be called if it is not already
+ * running.
+ */
 /* The interrupt handler does all of the Rx thread work and cleans up
    after the Tx thread. */
 static irqreturn_t rtl8139_interrupt (int irq, void *dev_instance)
@@ -1026,7 +1154,32 @@ static irqreturn_t rtl8139_interrupt (int irq, void *dev_instance)
 	/* Acknowledge all of the current interrupt sources ASAP, but
 	   an first get an additional status bit from CSCR. */
 	if (unlikely(status & RxUnderrun))
-		link_changed = RTL_R16 (CSCR) & CSCR_LinkChangeBit;	
+		link_changed = RTL_R16 (CSCR) & CSCR_LinkChangeBit;
+	ackstat = status & ~ (RxAckBits | TxErr);
+	if(ackstat)
+		RTL_W16(IntrStatus, ackstat);
+	/* Receive packets are processed by poll routine.If not running start it now. */
+	if (status & RxAckBits){
+		if (napi_schedule_prep(&tp->napi)) {
+			RTL_W16_F (IntrMask, rtl8139_norx_intr_mask);
+			__napi_schedule(&tp->napi);
+		}
+	}
+	/* Check uncommon events with one test. */
+	if (unlikely(status & (PCIErr | PCSTimeout | RxUnderrun | RxErr)))
+		rtl8139_weird_interrupt (dev, tp, ioaddr,
+					 status, link_changed);
+	if (status & (TxOK | TxErr)) {
+		rtl8139_tx_interrupt (dev, tp, ioaddr);
+		if (status & TxErr)
+			RTL_W16 (IntrStatus, TxErr);
+	}
+out:
+	spin_unlock (&tp->lock);
+	netdev_dbg(dev, "exiting interrupt, intr_status=%#4.4x\n",
+		   RTL_R16(IntrStatus));
+	/*The possible return values from an interrupt handler, indicating whether an actual interrupt from the device was present.*/
+	return IRQ_RETVAL(handled);    	
 }
 static struct pci_driver rtl8139_pci_driver = {
 	.name           = DRV_NAME,
