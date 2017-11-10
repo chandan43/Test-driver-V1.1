@@ -988,6 +988,14 @@ static int read_eeprom(void __iomem *ioaddr, int location, int addr_len)
 
 }
 
+/**
+ *	napi_enable - enable NAPI scheduling
+ *	@n: NAPI context
+ *
+ * Resume NAPI from being scheduled on this context.
+ * Must be paired with napi_disable.
+ */
+
 static int rtl8139_open (struct net_device *dev)
 {
 	struct rtl8139_private *tp = netdev_priv(dev);
@@ -997,8 +1005,97 @@ static int rtl8139_open (struct net_device *dev)
 	retval = request_irq(irq, rtl8139_interrupt, IRQF_SHARED, dev->name, dev);
 	if (retval)
 		return retval;
+	/* dma allocation for rx and tx buffer*/
+	tp->tx_bufs = dma_alloc_coherent(&tp->pci_dev->dev, TX_BUF_TOT_LEN,
+					   &tp->tx_bufs_dma, GFP_KERNEL);
+	tp->rx_ring = dma_alloc_coherent(&tp->pci_dev->dev, RX_BUF_TOT_LEN,
+					   &tp->rx_ring_dma, GFP_KERNEL);
+	if (tp->tx_bufs == NULL || tp->rx_ring == NULL) {
+		free_irq(irq, dev);	
 	
-		
+		if (tp->tx_bufs)
+			dma_free_coherent(&tp->pci_dev->dev, TX_BUF_TOT_LEN,
+					    tp->tx_bufs, tp->tx_bufs_dma);
+		if (tp->rx_ring)
+			dma_free_coherent(&tp->pci_dev->dev, RX_BUF_TOT_LEN,
+					    tp->rx_ring, tp->rx_ring_dma);
+		return -ENOMEM;
+	}
+	napi_enable(&tp->napi);  /*enable NAPI scheduling*/
+	tp->mii.full_duplex = tp->mii.force_media;     /* autoneg mode*/
+	tp->tx_flag = (TX_FIFO_THRESH << 11) & 0x003f0000;   /*80000 & 0x003f0000 i.e ERTXTH0 to 5 six bit : i.e 3f */
+	rtl8139_init_ring (dev);
+	rtl8139_hw_start (dev);
+	netif_start_queue (dev);
+	
+}
+static void rtl8139_hw_start (struct net_device *dev)
+{
+	struct rtl8139_private *tp = netdev_priv(dev);
+	void __iomem *ioaddr = tp->mmio_addr;
+	u32 i;
+	u8 tmp;
+	/* Bring old chips out of low-power mode. */
+	if (rtl_chip_info[tp->chipset].flags & HasHltClk)
+		RTL_W8 (HltClk, 'R');
+	rtl8139_chip_reset (ioaddr);	
+	/* unlock Config[01234] and BMCR register writes */
+	RTL_W8_F (Cfg9346, Cfg9346_Unlock);
+	/* Restore our idea of the MAC address. */
+	RTL_W32_F (MAC0 + 0, le32_to_cpu (*(__le32 *) (dev->dev_addr + 0)));
+	RTL_W32_F (MAC0 + 4, le16_to_cpu (*(__le16 *) (dev->dev_addr + 4)));
+
+	tp->cur_rx = 0;
+	/* init Rx ring buffer DMA address */
+	RTL_W32_F (RxBuf, tp->rx_ring_dma);
+
+	/* Must enable Tx/Rx before setting transfer thresholds! */
+	RTL_W8 (ChipCmd, CmdRxEnb | CmdTxEnb);
+	
+	tp->rx_config = rtl8139_rx_config | AcceptBroadcast | AcceptMyPhys;
+	RTL_W32 (RxConfig, tp->rx_config);
+	RTL_W32 (TxConfig, rtl8139_tx_config);
+	
+	rtl_check_media (dev, 1); //TODO
+	if (tp->chipset >= CH_8139B) {
+		/* Disable magic packet scanning, which is enabled
+		 * when PM is enabled in Config1.  It can be reenabled
+		 * via ETHTOOL_SWOL if desired.  */
+		RTL_W8 (Config3, RTL_R8 (Config3) & ~Cfg3_Magic);
+	}
+	netdev_dbg(dev, "init buffer addresses\n");
+	/* Lock Config[01234] and BMCR register writes */
+	RTL_W8 (Cfg9346, Cfg9346_Lock);
+
+	/* init Tx buffer DMA addresses */
+	for (i = 0; i < NUM_TX_DESC; i++)
+		RTL_W32_F (TxAddr0 + (i * 4), tp->tx_bufs_dma + (tp->tx_buf[i] - tp->tx_bufs));
+	RTL_W32 (RxMissed, 0);
+
+	rtl8139_set_rx_mode (dev);  //TODO
+	/* no early-rx interrupts */
+	RTL_W16 (MultiIntr, RTL_R16 (MultiIntr) & MultiIntrClear);
+	/* make sure RxTx has started */
+	tmp = RTL_R8 (ChipCmd);
+	if ((!(tmp & CmdRxEnb)) || (!(tmp & CmdTxEnb)))
+		RTL_W8 (ChipCmd, CmdRxEnb | CmdTxEnb);
+
+	/* Enable all known interrupts by setting the interrupt mask. */
+	RTL_W16 (IntrMask, rtl8139_intr_mask);
+	
+}
+/* Initialize the Rx and Tx rings, along with various 'dev' bits. */
+static void rtl8139_init_ring (struct net_device *dev)
+{
+	struct rtl8139_private *tp = netdev_priv(dev);
+	int i;
+
+	tp->cur_rx = 0;
+	tp->cur_tx = 0;
+	tp->dirty_tx = 0;
+
+	for (i = 0; i < NUM_TX_DESC; i++)
+		tp->tx_buf[i] = &tp->tx_bufs[i * TX_BUF_SIZE];
 }
 /*
 mb()
