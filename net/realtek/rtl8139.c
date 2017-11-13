@@ -6,6 +6,9 @@
 #include <linux/netdevice.h>
 #include <linux/ethtool.h>
 #include <linux/if_vlan.h>
+#include <linux/rtnetlink.h>
+#include <linux/delay.h>
+#include <linux/mii.h>
 
 #define DRV_NAME	"realtek8139"
 #define DRV_VERSION	".1"
@@ -996,6 +999,13 @@ static int read_eeprom(void __iomem *ioaddr, int location, int addr_len)
  * Must be paired with napi_disable.
  */
 
+/**
+ *	netif_start_queue - allow transmit
+ *	@dev: network device
+ *
+ *	Allow upper layers to call the device hard_start_xmit routine.
+ */
+
 static int rtl8139_open (struct net_device *dev)
 {
 	struct rtl8139_private *tp = netdev_priv(dev);
@@ -1027,7 +1037,35 @@ static int rtl8139_open (struct net_device *dev)
 	rtl8139_init_ring (dev);
 	rtl8139_hw_start (dev);
 	netif_start_queue (dev);
+
+	netif_dbg(tp, ifup, dev,
+		  "%s() ioaddr %#llx IRQ %d GP Pins %02x %s-duplex\n",
+		  __func__,
+		  (unsigned long long)pci_resource_start (tp->pci_dev, 1),
+		  irq, RTL_R8 (MediaStatus),
+		  tp->mii.full_duplex ? "full" : "half");
+
+	rtl8139_start_thread(tp);
+
+	return 0;
 	
+}
+/**
+ * mii_check_media - check the MII interface for a carrier/speed/duplex change
+ * @mii: the MII interface
+ * @ok_to_print: OK to print link up/down messages
+ * @init_media: OK to save duplex mode in @mii
+ *
+ * Returns 1 if the duplex mode changed, 0 if not.
+ * If the media type is forced, always returns 0.
+ */
+static void rtl_check_media (struct net_device *dev, unsigned int init_media)
+{
+	struct rtl8139_private *tp = netdev_priv(dev);
+
+	if (tp->phys[0] >= 0) {
+		mii_check_media(&tp->mii, netif_msg_link(tp), init_media);
+	}
 }
 static void rtl8139_hw_start (struct net_device *dev)
 {
@@ -1097,6 +1135,128 @@ static void rtl8139_init_ring (struct net_device *dev)
 	for (i = 0; i < NUM_TX_DESC; i++)
 		tp->tx_buf[i] = &tp->tx_bufs[i * TX_BUF_SIZE];
 }
+/**
+ * struct mdio_if_info - Ethernet controller MDIO interface
+ * @prtad: PRTAD of the PHY (%MDIO_PRTAD_NONE if not present/unknown)
+ * @mmds: Mask of MMDs expected to be present in the PHY.  This must be
+ *	non-zero unless @prtad = %MDIO_PRTAD_NONE.
+ * @mode_support: MDIO modes supported.  If %MDIO_SUPPORTS_C22 is set then
+ *	MII register access will be passed through with @devad =
+ *	%MDIO_DEVAD_NONE.  If %MDIO_EMULATE_C22 is set then access to
+ *	commonly used clause 22 registers will be translated into
+ *	clause 45 registers.
+ * @dev: Net device structure
+ * @mdio_read: Register read function; returns value or negative error code
+ * @mdio_write: Register write function; returns 0 or negative error code
+ */
+static inline void rtl8139_thread_iter (struct net_device *dev,
+				 struct rtl8139_private *tp,
+				 void __iomem *ioaddr)
+{
+	int mii_lpa;
+	mii_lpa = mdio_read (dev, tp->phys[0], MII_LPA);                     /*  MII_LPA :Link partner ability reg  */
+	
+
+}
+/* RTNL is used as a global lock for all changes to network configuration  */
+/**
+ *	netif_running - test if up
+ *	@dev: network device
+ *
+ *	Test if the device has been brought up.
+ */
+static void rtl8139_thread (struct work_struct *work)
+{
+	struct rtl8139_private *tp =
+		container_of(work, struct rtl8139_private, thread.work);
+	struct net_device *dev = tp->mii.dev;
+	unsigned long thr_delay = next_tick;
+	rtnl_lock();
+
+	if (!netif_running(dev))
+		goto out_unlock;
+
+	if (tp->watchdog_fired) {
+		tp->watchdog_fired = 0;
+		rtl8139_tx_timeout_task(work);
+	} else
+		rtl8139_thread_iter(dev, tp, tp->mmio_addr);   //TODO: 
+
+	if (tp->have_thread)
+		schedule_delayed_work(&tp->thread, thr_delay);
+out_unlock:
+	rtnl_unlock ();
+}
+
+/**
+ * schedule_delayed_work - put work task in global workqueue after delay
+ * @dwork: job to be done
+ * @delay: number of jiffies to wait or 0 for immediate execution
+ *
+ * After waiting for a given time this puts a job in the kernel-global
+ * workqueue.
+ */
+
+/*
+	If a bottom half shares data with usercontext,youhave two problems.Firstly, thecurrent usercontext can be interrupted by a bottomhalf,andsecondly, thecritical region could been tered from another CPU.Thisis wherespin_lock_bh()(include/linux/spinlock.h) is used.It disables bottom halveson thatCPU,then grabs the lock.spin_unlock_bh() does the reverse.This work sperfectly for UP as well:the spin lock vanishes, and this macro simply be comes local_bh_disable()(include/asm/softirq.h), which protects you from the bottom half being run.
+*/
+static void rtl8139_start_thread(struct rtl8139_private *tp)
+{
+	tp->twistie = 0;
+	if (tp->chipset == CH_8139_K)
+		tp->twistie = 1;
+	else if (tp->drv_flags & HAS_LNK_CHNG)
+		return;
+
+	tp->have_thread = 1;
+	tp->watchdog_fired = 0;
+
+	schedule_delayed_work(&tp->thread, next_tick);
+}
+
+static void rtl8139_tx_timeout_task (struct work_struct *work)
+{
+	struct rtl8139_private *tp =
+		container_of(work, struct rtl8139_private, thread.work);
+	struct net_device *dev = tp->mii.dev;
+	void __iomem *ioaddr = tp->mmio_addr;
+	int i;
+	u8 tmp8;
+	
+	netdev_dbg(dev, "Transmit timeout, status %02x %04x %04x media %02x\n",
+		   RTL_R8(ChipCmd), RTL_R16(IntrStatus),
+		   RTL_R16(IntrMask), RTL_R8(MediaStatus));
+	/* Emit info to figure out what went wrong. */
+	etdev_dbg(dev, "Tx queue start entry %ld  dirty entry %ld\n",
+		   tp->cur_tx, tp->dirty_tx);
+	for (i = 0; i < NUM_TX_DESC; i++)
+		netdev_dbg(dev, "Tx descriptor %d is %08x%s\n",
+			   i, RTL_R32(TxStatus0 + (i * 4)),
+			   i == tp->dirty_tx % NUM_TX_DESC ?
+			   " (queue head)" : "");
+	tp->xstats.tx_timeouts++;
+	
+	/* disable Tx ASAP, if not already */
+	tmp8 = RTL_R8 (ChipCmd);
+	if (tmp8 & CmdTxEnb)
+		RTL_W8 (ChipCmd, CmdRxEnb);
+	/* Locking Between User Context and BHs : */
+	spin_lock_bh(&tp->rx_lock);
+	/* Disable interrupts by clearing the interrupt mask. */
+	RTL_W16 (IntrMask, 0x0000);
+	/* Stop a shared interrupt from scavenging while we are. */
+	spin_lock_irq(&tp->lock);
+	rtl8139_tx_clear (tp);
+	spin_unlock_irq(&tp->lock);
+
+	/* ...and finally, reset everything */
+	if (netif_running(dev)) {
+		rtl8139_hw_start (dev);
+		netif_wake_queue (dev);
+	}
+	spin_unlock_bh(&tp->rx_lock);
+}
+
 /*
 mb()
 	A full system memory barrier. All memory operations before the mb() in the instruction stream will be committed before any operations after the mb() are committed. This ordering 	 will be visible to all bus masters in the system. It will also ensure the order in which accesses from a single processor reaches slave devices.
@@ -1277,6 +1437,74 @@ out:
 		   RTL_R16(IntrStatus));
 	/*The possible return values from an interrupt handler, indicating whether an actual interrupt from the device was present.*/
 	return IRQ_RETVAL(handled);    	
+}
+
+/*
+ * Helpers for hash table generation of ethernet nics:
+ *
+ * Ethernet sends the least significant bit of a byte first, thus crc32_le
+ * is used. The output of crc32_le is bit reversed [most significant bit
+ * is in bit nr 0], thus it must be reversed before use. Except for
+ * nics that bit swap the result internally...
+ */
+
+/* Set or clear the multicast filter for this adaptor.
+ *    This routine is not state sensitive and need not be SMP locked. */
+
+static void __set_rx_mode (struct net_device *dev)
+{
+	struct rtl8139_private *tp = netdev_priv(dev);
+	void __iomem *ioaddr = tp->mmio_addr;
+	u32 mc_filter[2];	/* Multicast hash filter */
+	int rx_mode;
+	u32 tmp;
+	netdev_dbg(dev, "rtl8139_set_rx_mode(%04x) done -- Rx config %08x\n",
+		   dev->flags, RTL_R32(RxConfig));
+	/* Note: do not reorder, GCC is clever about common statements. */
+	/* * @IFF_PROMISC: receive all packets. Can be toggled through sysfs */
+ 	/* @IFF_ALLMULTI: receive all multicast packets. Can be toggled through sysfs.*/
+	/*#define ETH_ALEN	6		Octets in one ethernet addr	  */
+	if (dev->flags & IFF_PROMISC) {
+		rx_mode =
+		    AcceptBroadcast | AcceptMulticast | AcceptMyPhys |
+		    AcceptAllPhys;
+		mc_filter[1] = mc_filter[0] = 0xffffffff;
+	} else if ((netdev_mc_count(dev) > multicast_filter_limit) ||
+		   (dev->flags & IFF_ALLMULTI)) {
+		/* Too many to filter perfectly -- accept all multicasts. */
+		rx_mode = AcceptBroadcast | AcceptMulticast | AcceptMyPhys;
+		mc_filter[1] = mc_filter[0] = 0xffffffff;
+	} else {
+		struct netdev_hw_addr *ha;
+		rx_mode = AcceptBroadcast | AcceptMyPhys;
+		mc_filter[1] = mc_filter[0] = 0;
+		netdev_for_each_mc_addr(ha, dev) {
+			int bit_nr = ether_crc(ETH_ALEN, ha->addr) >> 26;  /*ether_crc: # crc32_le (u32 crc(~0) unsigned char const *p,size len);Calculate bitwise little-endian Ethernet AUTODIN II CRC32 */
+
+			mc_filter[bit_nr >> 5] |= 1 << (bit_nr & 31);   /* bit_nr (6)  & (011111) i.e bit_nr 6th will lose*/
+			rx_mode |= AcceptMulticast;
+		}
+	}	
+	if (dev->features & NETIF_F_RXALL)                //Receive full frames without stripping the FCS.
+		rx_mode |= (AcceptErr | AcceptRunt);
+	/* We can safely update without stopping the chip. */
+	tmp = rtl8139_rx_config | rx_mode;
+	if (tp->rx_config != tmp) {
+		RTL_W32_F (RxConfig, tmp);
+		tp->rx_config = tmp;
+	}
+	RTL_W32_F (MAR0 + 0, mc_filter[0]);
+	RTL_W32_F (MAR0 + 4, mc_filter[1]);
+		
+}
+static void rtl8139_set_rx_mode (struct net_device *dev)
+{
+	unsigned long flags;
+	struct rtl8139_private *tp = netdev_priv(dev);
+
+	spin_lock_irqsave (&tp->lock, flags);
+	__set_rx_mode(dev);
+	spin_unlock_irqrestore (&tp->lock, flags);
 }
 static struct pci_driver rtl8139_pci_driver = {
 	.name           = DRV_NAME,
