@@ -1135,6 +1135,112 @@ static void rtl8139_init_ring (struct net_device *dev)
 	for (i = 0; i < NUM_TX_DESC; i++)
 		tp->tx_buf[i] = &tp->tx_bufs[i * TX_BUF_SIZE];
 }
+/*TODO : All of this is magic and undocumented.*/
+/* This must be global for CONFIG_8139TOO_TUNE_TWISTER case */
+static int next_tick = 3 * HZ;
+
+#ifndef CONFIG_8139TOO_TUNE_TWISTER
+static inline void rtl8139_tune_twister (struct net_device *dev,
+				  struct rtl8139_private *tp) {}
+#else
+enum TwisterParamVals {
+	PARA78_default	= 0x78fa8388,
+	PARA7c_default	= 0xcb38de43,	/* param[0][3] */
+	PARA7c_xxx	= 0xcb38de43,
+};
+
+static const unsigned long param[4][4] = {
+	{0xcb39de43, 0xcb39ce43, 0xfb38de03, 0xcb38de43},
+	{0xcb39de43, 0xcb39ce43, 0xcb39ce83, 0xcb39ce83},
+	{0xcb39de43, 0xcb39ce43, 0xcb39ce83, 0xcb39ce83},
+	{0xbb39de43, 0xbb39ce43, 0xbb39ce83, 0xbb39ce83}
+};
+static void rtl8139_tune_twister (struct net_device *dev,
+				  struct rtl8139_private *tp)
+{
+	int linkcase;
+	void __iomem *ioaddr = tp->mmio_addr;
+
+	/* This is a complicated state machine to configure the "twister" for
+	   impedance/echos based on the cable length.
+	   All of this is magic and undocumented.
+	 */
+	switch (tp->twistie) {
+		case 1:
+		if (RTL_R16 (CSCR) & CSCR_LinkOKBit) {
+			/* We have link beat, let us tune the twister. */
+			RTL_W16 (CSCR, CSCR_LinkDownOffCmd);
+			tp->twistie = 2;	/* Change to state 2. */
+			next_tick = HZ / 10;
+		} else {
+			/* Just put in some reasonable defaults for when beat returns. */
+			RTL_W16 (CSCR, CSCR_LinkDownCmd);
+			RTL_W32 (FIFOTMS, 0x20);	/* Turn on cable test mode. */
+			RTL_W32 (PARA78, PARA78_default);
+			RTL_W32 (PARA7c, PARA7c_default);
+			tp->twistie = 0;	/* Bail from future actions. */
+		}
+		break;
+	case 2:
+		/* Read how long it took to hear the echo. */
+		linkcase = RTL_R16 (CSCR) & CSCR_LinkStatusBits;
+		if (linkcase == 0x7000)
+			tp->twist_row = 3;
+		else if (linkcase == 0x3000)
+			tp->twist_row = 2;
+		else if (linkcase == 0x1000)
+			tp->twist_row = 1;
+		else
+			tp->twist_row = 0;
+		tp->twist_col = 0;
+		tp->twistie = 3;	/* Change to state 2. */
+		next_tick = HZ / 10;
+		break;
+	case 3:
+		/* Put out four tuning parameters, one per 100msec. */
+		if (tp->twist_col == 0)
+			RTL_W16 (FIFOTMS, 0);
+		RTL_W32 (PARA7c, param[(int) tp->twist_row]
+			 [(int) tp->twist_col]);
+		next_tick = HZ / 10;
+		if (++tp->twist_col >= 4) {
+			/* For short cables we are done.
+			   For long cables (row == 3) check for mistune. */
+			tp->twistie =
+			    (tp->twist_row == 3) ? 4 : 0;
+		}
+		break;
+	case 4:
+		/* Special case for long cables: check for mistune. */
+		if ((RTL_R16 (CSCR) &
+		     CSCR_LinkStatusBits) == 0x7000) {
+			tp->twistie = 0;
+			break;
+		} else {
+			RTL_W32 (PARA7c, 0xfb38de03);
+			tp->twistie = 5;
+			next_tick = HZ / 10;
+		}
+		break;
+	case 5:
+		/* Retune for shorter cable (column 2). */
+		RTL_W32 (FIFOTMS, 0x20);
+		RTL_W32 (PARA78, PARA78_default);
+		RTL_W32 (PARA7c, PARA7c_default);
+		RTL_W32 (FIFOTMS, 0x00);
+		tp->twist_row = 2;
+		tp->twist_col = 0;
+		tp->twistie = 3;
+		next_tick = HZ / 10;
+		break;
+
+	default:
+		/* do nothing */
+		break;
+	}
+}
+#endif /* CONFIG_8139TOO_TUNE_TWISTER */
+
 /**
  * struct mdio_if_info - Ethernet controller MDIO interface
  * @prtad: PRTAD of the PHY (%MDIO_PRTAD_NONE if not present/unknown)
@@ -1149,14 +1255,49 @@ static void rtl8139_init_ring (struct net_device *dev)
  * @mdio_read: Register read function; returns value or negative error code
  * @mdio_write: Register write function; returns 0 or negative error code
  */
+ /*  mdio_read (@param1 : the net device to read  , @param2 :      the phy address to read  ,@param3:      the phy regiester id to read  )
+  *  Read MII registers through MDIO and MDC using MDIO management frame structure and protocol(defined by ISO/IEC).
+  *  The Auto-Negotiation Link Partner Ability Register (ANLPAR) at address 0x05h is used to receive the base link code word as well as all next page code words during the negotiation.
+ */
+/* This is a complicated state machine to configure the "twister" for impedance/echos based on the cable length. All of this is magic and undocumented. */ 
+
 static inline void rtl8139_thread_iter (struct net_device *dev,
 				 struct rtl8139_private *tp,
 				 void __iomem *ioaddr)
 {
 	int mii_lpa;
-	mii_lpa = mdio_read (dev, tp->phys[0], MII_LPA);                     /*  MII_LPA :Link partner ability reg  */
+	mii_lpa = mdio_read (dev, tp->phys[0], MII_LPA);                     /*   read MII PHY register : --MII_LPA :Link partner ability reg  */	
+	if (!tp->mii.force_media && mii_lpa != 0xffff) {                     /*    force_media: is autoneg.??  # Basic Mode Control Register :- it should set all for autoneg */
+		
+		int duplex = ((mii_lpa & LPA_100FULL) ||                     /*     LPA_100FULL : Can do 100mbps full-duplex */
+			      (mii_lpa & 0x01C0) == 0x0040);                 /*     Auto-Negotiation Link Partner Ability Register -Offset 0068h-0069h : 
+										    Checkingh whether "10Base-T full duplex is supported by link partner" */	
+		if (tp->mii.full_duplex != duplex) {
+			tp->mii.full_duplex = duplex;
+			if (mii_lpa) {
+				netdev_info(dev, "Setting %s-duplex based on MII #%d link partner ability of %04x\n",
+					    tp->mii.full_duplex ? "full" : "half",
+					    tp->phys[0], mii_lpa);
+			} else {
+				netdev_info(dev, "media is unconnected, link down, or incompatible connection\n");
+			}
+#if 0
+			RTL_W8 (Cfg9346, Cfg9346_Unlock);
+			RTL_W8 (Config1, tp->mii.full_duplex ? 0x60 : 0x20);
+			RTL_W8 (Cfg9346, Cfg9346_Lock);
+#endif	
+		} 
+	}
+	next_tick = HZ * 60;
+	rtl8139_tune_twister (dev, tp);
 	
-
+	
+	netdev_dbg(dev, "Media selection tick, Link partner %04x\n",
+		   RTL_R16(NWayLPAR));
+	netdev_dbg(dev, "Other registers are IntMask %04x IntStatus %04x\n",
+		   RTL_R16(IntrMask), RTL_R16(IntrStatus));
+	netdev_dbg(dev, "Chip config %02x %02x\n",
+		   RTL_R8(Config0), RTL_R8(Config1));
 }
 /* RTNL is used as a global lock for all changes to network configuration  */
 /**
