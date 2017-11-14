@@ -1355,6 +1355,14 @@ static void rtl8139_start_thread(struct rtl8139_private *tp)
 	schedule_delayed_work(&tp->thread, next_tick);
 }
 
+
+static inline void rtl8139_tx_clear (struct rtl8139_private *tp)
+{
+	tp->cur_tx = 0;
+	tp->dirty_tx = 0;
+
+	/* XXX account for unsent Tx packets in tp->stats.tx_dropped */
+}
 static void rtl8139_tx_timeout_task (struct work_struct *work)
 {
 	struct rtl8139_private *tp =
@@ -1477,6 +1485,116 @@ static void rtl8139_tx_interrupt (struct net_device *dev,
 		netif_wake_queue (dev); /* restart transmit */
 	} 
 }
+/**
+ *	__napi_alloc_skb - allocate skbuff for rx in a specific NAPI instance
+ *	@napi: napi instance this buffer was allocated for
+ *	@len: length to allocate
+ *	@gfp_mask: get_free_pages mask, passed to alloc_skb and alloc_pages
+ *
+ *	Allocate a new sk_buff for use in NAPI receive.  This buffer will
+ *	attempt to allocate the head from a special reserved region used
+ *	only for NAPI Rx allocation.  By doing this we can save several
+ *	CPU cycles by avoiding having to disable and re-enable IRQs.
+ *
+ *	%NULL is returned if there is no free memory.
+ */
+static int rtl8139_rx(struct net_device *dev, struct rtl8139_private *tp,
+		      int budget)
+{
+	void __iomem *ioaddr = tp->mmio_addr;
+	int received = 0;
+	unsigned char *rx_ring = tp->rx_ring;
+	unsigned int cur_rx = tp->cur_rx;
+	unsigned int rx_size = 0;
+	netdev_dbg(dev, "In %s(), current %04x BufAddr %04x, free to %04x, Cmd %02x\n",
+		   __func__, (u16)cur_rx,
+		   RTL_R16(RxBufAddr), RTL_R16(RxBufPtr), RTL_R8(ChipCmd));
+	while (netif_running(dev) && received < budget &&
+	       (RTL_R8 (ChipCmd) & RxBufEmpty) == 0) {
+		u32 ring_offset = cur_rx % RX_BUF_LEN;
+		u32 rx_status;
+		unsigned int pkt_size;
+		struct sk_buff *skb;
+		
+		rmb();
+		/* read size+status of next frame from DMA ring buffer */
+		rx_status = le32_to_cpu (*(__le32 *) (rx_ring + ring_offset));
+		rx_size = rx_status >> 16;              /* status : First 16 bit */
+		if (likely(!(dev->features & NETIF_F_RXFCS)))       /*Axpend FCS to skb pkt data */
+			pkt_size = rx_size - 4;
+		else 
+			pkt_size = rx_size;
+		netif_dbg(tp, rx_status, dev, "%s() status %04x, size %04x, cur %04x\n",
+			  __func__, rx_status, rx_size, cur_rx);	
+#if RTL8139_DEBUG > 2
+		print_hex_dump(KERN_DEBUG, "Frame contents: ",
+			       DUMP_PREFIX_OFFSET, 16, 1,
+			       &rx_ring[ring_offset], 70, true);
+#endif
+		
+		/* Packet copy from FIFO still in progress.
+		 * Theoretically, this should never happen
+		 * since EarlyRx is disabled.
+		 */	
+		 if (unlikely(rx_size == 0xfff0)) {
+			if (!tp->fifo_copy_timeout)
+				tp->fifo_copy_timeout = jiffies + 2;
+ 		/* time_after(a,b) returns true if the time a is after time b.*/
+			else if (time_after(jiffies, tp->fifo_copy_timeout)) {
+				netdev_dbg(dev, "hung FIFO. Reset\n");
+				rx_size = 0;
+				goto no_early_rx;
+			}
+		 netif_dbg(tp, intr, dev, "fifo copy in progress\n");
+			tp->xstats.early_rx++;
+			break;
+		 }
+no_early_rx:
+		tp->fifo_copy_timeout = 0;
+		 /* If Rx err or invalid rx_size/rx_status received
+		 * (which happens if we get lost in the ring),
+		 * Rx process gets reset, so we abort any further
+		 * Rx processing.
+		 */	
+		if (unlikely((rx_size > (MAX_ETH_FRAME_SIZE+4)) ||
+			     (rx_size < 8) ||
+			     (!(rx_status & RxStatusOK)))) {
+			if ((dev->features & NETIF_F_RXALL) &&              /* Receive errored frames too */
+			    (rx_size <= (MAX_ETH_FRAME_SIZE + 4)) &&
+			    (rx_size >= 8) &&
+			    (!(rx_status & RxStatusOK))) {
+				/* Length is at least mostly OK, but pkt has
+				 * error.  I'm hoping we can handle some of these
+				 * errors without resetting the chip. --Ben
+				 */
+				dev->stats.rx_errors++;
+				if (rx_status & RxCRCErr) {
+					dev->stats.rx_crc_errors++;
+					goto keep_pkt;
+				}
+				if (rx_status & RxRunt) {
+					dev->stats.rx_length_errors++;
+					goto keep_pkt;
+				}
+		        }
+			rtl8139_rx_err (rx_status, dev, tp, ioaddr); //TODO
+			received = -1;
+			goto out;				
+		}
+keep_pkt:
+		/* Malloc up new buffer, compatible with net-2e. */
+		/* Omit the four octet CRC from the length. */
+		skb = napi_alloc_skb(&tp->napi, pkt_size);
+		if (likely(skb)) {
+#if RX_BUF_IDX == 3
+			wrap_copy(skb, rx_ring, ring_offset+4, pkt_size);
+#else
+			skb_copy_to_linear_data (skb, &rx_ring[ring_offset + 4], pkt_size);  //memcpy(skb->data, from, len);
+#endif
+		}
+	}
+	
+}
 static void rtl8139_weird_interrupt (struct net_device *dev,
 				     struct rtl8139_private *tp,
 				     void __iomem *ioaddr,
@@ -1508,7 +1626,18 @@ static void rtl8139_weird_interrupt (struct net_device *dev,
 		netdev_err(dev, "PCI Bus error %04x\n", pci_cmd_status);
 	}
 }/* close rtl8139_weird_interrupt */
+static int rtl8139_poll(struct napi_struct *napi, int budget)
+{
+	struct rtl8139_private *tp = container_of(napi, struct rtl8139_private, napi);
+	struct net_device *dev = tp->dev;
+	void __iomem *ioaddr = tp->mmio_addr;
+	int work_done;
+	spin_lock(&tp->rx_lock);
+	work_done = 0;
+	if (likely(RTL_R16(IntrStatus) & RxAckBits))  /*if RxIFOOver | RxOverflow | RxOK is set then work_done ++ */
+		work_done += rtl8139_rx(dev, tp, budget);
 
+}
 /**
  *	napi_schedule_prep - check if napi can be scheduled
  *	@n: napi context
@@ -1580,6 +1709,119 @@ out:
 	return IRQ_RETVAL(handled);    	
 }
 
+#ifdef CONFIG_NET_POLL_CONTROLLER
+/*
+ * Polling receive - used by netconsole and other diagnostic tools
+ * to allow network i/o with interrupts disabled.
+ */
+/* disable_irq — disable an irq and wait for completion : Disable the selected interrupt line. Enables and Disables are nested. This function waits 
+   for any pending IRQ handlers for this interrupt to complete before returning. If you use this function while holding a resource the IRQ handler 
+   may need you will deadlock. 
+*/
+
+/* enable_irq — enable handling of an irq :  Undoes the effect of one call to disable_irq. If this matches the last disable, processing of interrupts on this IRQ line is re-enabled.
+  This function may be called from IRQ context only when desc->irq_data.chip->bus_lock and desc->chip->bus_sync_unlock are NULL ! 
+*/
+static void rtl8139_poll_controller(struct net_device *dev)
+{
+	struct rtl8139_private *tp = netdev_priv(dev);
+	const int irq = tp->pci_dev->irq;
+
+	disable_irq(irq);
+	rtl8139_interrupt(irq, dev);
+	enable_irq(irq);
+}
+#endif
+
+/**
+ * is_valid_ether_addr - Determine if the given Ethernet address is valid
+ * @addr: Pointer to a six-byte array containing the Ethernet address
+ *
+ * Check that the Ethernet address (MAC) is not 00:00:00:00:00:00, is not
+ * a multicast address, and is not FF:FF:FF:FF:FF:FF.
+ *
+ * Return true if the address is valid.
+ */
+
+static int rtl8139_set_mac_address(struct net_device *dev, void *p)
+{
+	struct rtl8139_private *tp = netdev_priv(dev);
+	void __iomem *ioaddr = tp->mmio_addr;
+	struct sockaddr *addr = p;
+	if (!is_valid_ether_addr(addr->sa_data))
+		return -EADDRNOTAVAIL;	
+	/* Copy ether_addr to dev addr */
+	memcpy(dev->dev_addr, addr->sa_data, dev->addr_len);
+	
+	spin_lock_irq(&tp->lock);
+
+	RTL_W8_F(Cfg9346, Cfg9346_Unlock);
+	RTL_W32_F(MAC0 + 0, cpu_to_le32 (*(u32 *) (dev->dev_addr + 0)));
+	RTL_W32_F(MAC0 + 4, cpu_to_le32 (*(u32 *) (dev->dev_addr + 4)));
+	RTL_W8_F(Cfg9346, Cfg9346_Lock);
+	
+	spin_unlock_irq(&tp->lock);
+
+	return 0;
+}
+/**
+ *	netif_stop_queue - stop transmitted packets
+ *	@dev: network device
+ *
+ *	Stop upper layers calling the device hard_start_xmit routine.
+ *	Used for flow control when transmit resources are unavailable.
+ */
+
+/**
+ *	napi_disable - prevent NAPI from scheduling
+ *	@n: napi context
+ *
+ * Stop NAPI from being scheduled on this context.
+ * Waits till any outstanding processing completes.
+ */
+
+static int rtl8139_close (struct net_device *dev)
+{
+	struct rtl8139_private *tp = netdev_priv(dev);
+	void __iomem *ioaddr = tp->mmio_addr;
+	unsigned long flags;
+	netif_stop_queue(dev);  /*Stop transmitted packets*/
+	napi_disable(&tp->napi);
+	netif_dbg(tp, ifdown, dev, "Shutting down ethercard, status was 0x%04x\n",
+		  RTL_R16(IntrStatus));
+	spin_lock_irqsave (&tp->lock, flags);
+	
+	/* Stop the chip's Tx and Rx DMA processes. */
+	RTL_W8 (ChipCmd, 0);
+	
+	/* Disable interrupts by clearing the interrupt mask. */
+	RTL_W16 (IntrMask, 0);
+	
+	/* Update the error counts. */
+	dev->stats.rx_missed_errors += RTL_R32 (RxMissed);
+	RTL_W32 (RxMissed, 0);
+	
+	spin_unlock_irqrestore (&tp->lock, flags);
+	
+	/*Free IRQ*/
+	free_irq(tp->pci_dev->irq, dev);
+	
+	rtl8139_tx_clear (tp);
+	dma_free_coherent(&tp->pci_dev->dev, RX_BUF_TOT_LEN,
+			  tp->rx_ring, tp->rx_ring_dma);
+	dma_free_coherent(&tp->pci_dev->dev, TX_BUF_TOT_LEN,
+			  tp->tx_bufs, tp->tx_bufs_dma);
+	tp->rx_ring = NULL;
+	tp->tx_bufs = NULL;
+	
+	/* Green! Put the chip in low-power mode. */
+	RTL_W8 (Cfg9346, Cfg9346_Unlock);
+	
+	if (rtl_chip_info[tp->chipset].flags & HasHltClk)
+		RTL_W8 (HltClk, 'H');	/* 'R' would leave the clock running. */
+
+	return 0;
+}
 /*
  * Helpers for hash table generation of ethernet nics:
  *
@@ -1638,6 +1880,7 @@ static void __set_rx_mode (struct net_device *dev)
 	RTL_W32_F (MAR0 + 4, mc_filter[1]);
 		
 }
+
 static void rtl8139_set_rx_mode (struct net_device *dev)
 {
 	unsigned long flags;
