@@ -1921,8 +1921,8 @@ static inline void wrap_copy(struct sk_buff *skb, const unsigned char *ring,
 	u32 left = RX_BUF_LEN - offset;
 
 	if (size > left) {
-		skb_copy_to_linear_data(skb, ring + offset, left);
-		skb_copy_to_linear_data_offset(skb, left, ring, size - left);
+		skb_copy_to_linear_data(skb, ring + offset, left);  
+		skb_copy_to_linear_data_offset(skb, left, ring, size - left); /* memcpy(skb->data + offset, from, len); */
 	} else
 		skb_copy_to_linear_data(skb, ring + offset, size);
 }

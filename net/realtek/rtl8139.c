@@ -559,7 +559,7 @@ struct rtl8139_private {
 	unsigned char		*tx_bufs;	/* Tx bounce buffer region. */
 	dma_addr_t		tx_bufs_dma;
 
-	signed char		phys[4];	/* MII device addresses. */
+	signed char		phys[4];	/* MII deive_skb (skb); addresses. */
 
 				/* Twister tune state. */
 	char			twistie, twist_row, twist_col;
@@ -846,6 +846,38 @@ err_out:
 		pci_disable_device (pdev);
 	return ERR_PTR(rc);
 }
+static int rtl8139_set_features(struct net_device *dev, netdev_features_t features)
+{
+	struct rtl8139_private *tp = netdev_priv(dev);
+	unsigned long flags;
+	
+	netdev_features_t changed = features ^ dev->features;		
+	void __iomem *ioaddr = tp->mmio_addr;
+	
+	if (!(changed & (NETIF_F_RXALL)))
+		return 0;
+	spin_lock_irqsave(&tp->lock, flags);
+	
+	if (changed & NETIF_F_RXALL) {
+		int rx_mode = tp->rx_config;
+		if (features & NETIF_F_RXALL)
+			rx_mode |= (AcceptErr | AcceptRunt);
+		else
+			rx_mode &= ~(AcceptErr | AcceptRunt);
+		tp->rx_config = rtl8139_rx_config | rx_mode;
+		RTL_W32_F(RxConfig, tp->rx_config);
+	}
+	spin_unlock_irqrestore(&tp->lock, flags);
+
+	return 0;	
+}
+static int rtl8139_change_mtu(struct net_device *dev, int new_mtu)
+{
+	if (new_mtu < 68 || new_mtu > MAX_ETH_DATA_SIZE)
+		return -EINVAL;
+	dev->mtu = new_mtu;
+	return 0;
+}
 
 static const struct net_device_ops rtl8139_netdev_ops = {
 	.ndo_open		= rtl8139_open,
@@ -863,7 +895,16 @@ static const struct net_device_ops rtl8139_netdev_ops = {
 #endif
 	.ndo_set_features	= rtl8139_set_features,
 };
-
+/**
+ *	netif_napi_add - initialize a NAPI context
+ *	@dev:  network device
+ *	@napi: NAPI context
+ *	@poll: polling function
+ *	@weight: default weight
+ *
+ * netif_napi_add() must be used to initialize a NAPI context prior to calling
+ * *any* of the other NAPI-related functions.
+ */
 /* New device inserted : probe function -*/
 static int  rtl8139_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
@@ -920,9 +961,29 @@ static int  rtl8139_init_one(struct pci_dev *pdev, const struct pci_device_id *e
 		    cpu_to_le16(read_eeprom (ioaddr, i + 7, addr_len));
 	/* The Rtl8139-specific entries in the device structure. */
 	dev->netdev_ops = &rtl8139_netdev_ops;
+#if 0
 	dev->ethtool_ops = &rtl8139_ethtool_ops;
+#endif
 	dev->watchdog_timeo = TX_TIMEOUT;
-	netif_napi_add(dev, &tp->napi, rtl8139_poll, 64)	
+	netif_napi_add(dev, &tp->napi, rtl8139_poll, 64); /* Initialize a NAPI context */	
+	
+	/* note: the hardware is not capable of sg/csum/highdma, however
+	 * through the use of skb_copy_and_csum_dev we enable these
+	 * features
+	 */
+	/* NETIF_F_SG_BIT : Scatter/gather IO. NETIF_F_HW_CSUM : Can checksum all the packets. NETIF_F_HIGHDMA :  Can DMA to high memory. */
+	dev->features |= NETIF_F_SG | NETIF_F_HW_CSUM | NETIF_F_HIGHDMA;
+	dev->vlan_features = dev->features;
+	
+	dev->hw_features |= NETIF_F_RXALL;  /*Receive errored frames*/
+	dev->hw_features |= NETIF_F_RXFCS;  /* RX checksum*/
+	
+	/* tp zeroed and aligned in alloc_etherdev */
+	tp = netdev_priv(dev);
+
+	/* note: tp->chipset set in rtl8139_init_board */
+	tp->drv_flags = board_info[ent->driver_data].hw_flags;
+		
 	
 	return 0;
 }
@@ -1406,6 +1467,61 @@ static void rtl8139_tx_timeout_task (struct work_struct *work)
 	spin_unlock_bh(&tp->rx_lock);
 }
 
+static void rtl8139_tx_timeout (struct net_device *dev)
+{
+	struct rtl8139_private *tp = netdev_priv(dev);
+	tp->watchdog_fired = 1;
+	if (!tp->have_thread) {
+		/* initialize all of a work item in one go */
+		INIT_DELAYED_WORK(&tp->thread, rtl8139_thread);
+		schedule_delayed_work(&tp->thread, next_tick);  /* put work task in global workqueue after delay */
+	}
+}
+static netdev_tx_t rtl8139_start_xmit (struct sk_buff *skb,
+					     struct net_device *dev)
+{
+	struct rtl8139_private *tp = netdev_priv(dev);
+	void __iomem *ioaddr = tp->mmio_addr;
+	unsigned int entry;
+	unsigned int len = skb->len;
+	unsigned long flags;
+	
+	/* Calculate the next Tx descriptor entry. */
+	
+	entry = tp->cur_tx % NUM_TX_DESC;
+	
+	/* Note: the chip doesn't have auto-pad! */
+	if (likely(len < TX_BUF_SIZE)) {
+		if (len < ETH_ZLEN)
+			memset(tp->tx_buf[entry], 0, ETH_ZLEN);
+		skb_copy_and_csum_dev(skb, tp->tx_buf[entry]);
+		/*dev_kfree_skb_irq(skb) : when caller drops a packet from irq context, replacing kfree_skb(skb) */
+		dev_kfree_skb_any(skb);
+	}else {
+		dev_kfree_skb_any(skb);
+		dev->stats.tx_dropped++;
+		return NETDEV_TX_OK;
+	}
+	spin_lock_irqsave(&tp->lock, flags);
+	/*
+	 * Writing to TxStatus triggers a DMA transfer of the data
+	 * copied to tp->tx_buf[entry] above. Use a memory barrier
+	 * to make sure that the device sees the updated data.
+	 */
+	wmb();
+	RTL_W32_F (TxStatus0 + (entry * sizeof (u32)),
+		   tp->tx_flag | max(len, (unsigned int)ETH_ZLEN));
+
+	tp->cur_tx++;
+	if ((tp->cur_tx - NUM_TX_DESC) == tp->dirty_tx)
+		netif_stop_queue (dev);
+	spin_unlock_irqrestore(&tp->lock, flags);
+	
+	netif_dbg(tp, tx_queued, dev, "Queued Tx packet size %u to slot %d\n",
+		  len, entry);
+
+	return NETDEV_TX_OK; /* driver took care of packet */	
+}
 /*
 mb()
 	A full system memory barrier. All memory operations before the mb() in the instruction stream will be committed before any operations after the mb() are committed. This ordering 	 will be visible to all bus masters in the system. It will also ensure the order in which accesses from a single processor reaches slave devices.
@@ -1485,6 +1601,36 @@ static void rtl8139_tx_interrupt (struct net_device *dev,
 		netif_wake_queue (dev); /* restart transmit */
 	} 
 }
+
+#if RX_BUF_IDX == 3
+static inline void wrap_copy(struct sk_buff *skb, const unsigned char *ring,
+				 u32 offset, unsigned int size)
+{
+	u32 left = RX_BUF_LEN - offset;
+
+	if (size > left) {
+		skb_copy_to_linear_data(skb, ring + offset, left);
+		skb_copy_to_linear_data_offset(skb, left, ring, size - left);
+	} else
+		skb_copy_to_linear_data(skb, ring + offset, size);
+}
+#endif
+static void rtl8139_isr_ack(struct rtl8139_private *tp)
+{
+	void __iomem *ioaddr = tp->mmio_addr;
+	u16 status;
+	
+	status = RTL_R16 (IntrStatus) & RxAckBits;
+	/* Clear out errors and receive interrupts */
+	if (likely(status != 0)) {
+		if (unlikely(status & (RxFIFOOver | RxOverflow))) {
+			tp->dev->stats.rx_errors++;
+			if (status & RxFIFOOver)
+				tp->dev->stats.rx_fifo_errors++;
+		}
+		RTL_W16_F (IntrStatus, RxAckBits);
+	}
+}
 /**
  *	__napi_alloc_skb - allocate skbuff for rx in a specific NAPI instance
  *	@napi: napi instance this buffer was allocated for
@@ -1497,6 +1643,39 @@ static void rtl8139_tx_interrupt (struct net_device *dev,
  *	CPU cycles by avoiding having to disable and re-enable IRQs.
  *
  *	%NULL is returned if there is no free memory.
+ */
+/**
+ *	skb_put - add data to a buffer
+ *	@skb: buffer to use
+ *	@len: amount of data to add
+ *
+ *	This function extends the used data area of the buffer. If this would
+ *	exceed the total buffer size the kernel will panic. A pointer to the
+ *	first byte of the extra data is returned.
+ */
+/**
+ * eth_type_trans - determine the packet's protocol ID.
+ * @skb: received socket data
+ * @dev: receiving network device
+ *
+ * The rule here is that we
+ * assume 802.3 if the type field is short enough to be a length.
+ * This is normal practice and works for any 'now in use' protocol.
+ */
+ /**
+ *	netif_receive_skb - process receive buffer from network
+ *	@skb: buffer to process
+ *
+ *	netif_receive_skb() is the main receive data processing function.
+ *	It always succeeds. The buffer may be dropped during processing
+ *	for congestion control or by the protocol layers.
+ *
+ *	This function may only be called from softirq context and interrupts
+ *	should be enabled.
+ *
+ *	Return values (usually ignored):
+ *	NET_RX_SUCCESS: no congestion
+ *	NET_RX_DROP: packet was dropped
  */
 static int rtl8139_rx(struct net_device *dev, struct rtl8139_private *tp,
 		      int budget)
@@ -1521,7 +1700,7 @@ static int rtl8139_rx(struct net_device *dev, struct rtl8139_private *tp,
 		rx_status = le32_to_cpu (*(__le32 *) (rx_ring + ring_offset));
 		rx_size = rx_status >> 16;              /* status : First 16 bit */
 		if (likely(!(dev->features & NETIF_F_RXFCS)))       /*Axpend FCS to skb pkt data */
-			pkt_size = rx_size - 4;
+			pkt_size = rx_size - 4;  /* first two bytes are receive status register*/
 		else 
 			pkt_size = rx_size;
 		netif_dbg(tp, rx_status, dev, "%s() status %04x, size %04x, cur %04x\n",
@@ -1591,16 +1770,48 @@ keep_pkt:
 #else
 			skb_copy_to_linear_data (skb, &rx_ring[ring_offset + 4], pkt_size);  //memcpy(skb->data, from, len);
 #endif
+			skb_put (skb, pkt_size); /*  add data to a buffer */
+			skb->protocol = eth_type_trans (skb, dev);i /*  determine the packet's protocol ID. */
+			u64_stats_update_begin(&tp->rx_stats.syncp);  //Perform non atomic operation after 
+			tp->rx_stats.packets++;
+			tp->rx_stats.bytes += pkt_size;
+			u64_stats_update_end(&tp->rx_stats.syncp);
+			
+			netif_receive_skb (skb);/* process receive buffer from network */	
+		}else {
+			dev->stats.rx_dropped++;
 		}
+		received++;
+		/* update tp->cur_rx to next writing location  */
+		
+		cur_rx = (cur_rx + rx_size + 4 + 3) & ~3;              /*  ~3 : First two bytes are receive status register*/ 
+		RTL_W16 (RxBufPtr, (u16) (cur_rx - 16));               /* 16 byte align the IP fields  */
+		
+		rtl8139_isr_ack(tp);
 	}
+	if (unlikely(!received || rx_size == 0xfff0))
+		rtl8139_isr_ack(tp);
+	netdev_dbg(dev, "Done %s(), current %04x BufAddr %04x, free to %04x, Cmd %02x\n",
+		   __func__, cur_rx,
+		   RTL_R16(RxBufAddr), RTL_R16(RxBufPtr), RTL_R8(ChipCmd));
 	
+	tp->cur_rx = cur_rx;
+
+	/*
+	 * The receive buffer should be mostly empty.
+	 * Tell NAPI to reenable the Rx irq.
+	 */
+	if (tp->fifo_copy_timeout)
+		received = budget;
+out:
+	return received;	
 }
 static void rtl8139_weird_interrupt (struct net_device *dev,
 				     struct rtl8139_private *tp,
 				     void __iomem *ioaddr,
 				     int status, int link_changed)
 {
-	netdev_dbg(dev, "Abnormal interrupt, status %08x\n", status);	
+	netdev_dbg(deve "Abnormal interrupt, status %08x\n", status);	
 	assert (dev != NULL);
 	assert (tp != NULL);
 	assert (ioaddr != NULL);
@@ -1636,7 +1847,21 @@ static int rtl8139_poll(struct napi_struct *napi, int budget)
 	work_done = 0;
 	if (likely(RTL_R16(IntrStatus) & RxAckBits))  /*if RxIFOOver | RxOverflow | RxOK is set then work_done ++ */
 		work_done += rtl8139_rx(dev, tp, budget);
+	
+	if (work_done < budget) {
+		unsigned long flags;
+		/*
+		 * Order is important since data can get interrupted
+		 * again when we think we are done.
+		 */
+		spin_lock_irqsave(&tp->lock, flags);
+		__napi_complete(napi);                   //NAPI processing complete
+		RTL_W16_F(IntrMask, rtl8139_intr_mask);
+		spin_unlock_irqrestore(&tp->lock, flags);
+	}
+	spin_unlock(&tp->rx_lock);
 
+	return work_done;
 }
 /**
  *	napi_schedule_prep - check if napi can be scheduled
@@ -1821,6 +2046,71 @@ static int rtl8139_close (struct net_device *dev)
 		RTL_W8 (HltClk, 'H');	/* 'R' would leave the clock running. */
 
 	return 0;
+}
+/**
+ * generic_mii_ioctl - main MII ioctl interface
+ * @mii_if: the MII interface
+ * @mii_data: MII ioctl data structure
+ * @cmd: MII ioctl command
+ * @duplex_chg_out: pointer to @duplex_changed status if there was no
+ *	ioctl error
+ *
+ * Returns 0 on success, negative on error.
+ */
+static int netdev_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
+{
+	struct rtl8139_private *tp = netdev_priv(dev);
+	int rc;
+	if (!netif_running(dev))
+		return -EINVAL;
+	spin_lock_irq(&tp->lock);
+	rc = generic_mii_ioctl(&tp->mii, if_mii(rq), cmd, NULL);
+	spin_unlock_irq(&tp->lock);
+
+	return rc;
+}
+
+/* Convert net_device_stats to rtnl_link_stats64. rtnl_link_stats64 has
+ * all the same fields in the same order as net_device_stats, with only
+ * the type differing, but rtnl_link_stats64 may have additional fields
+ * at the end for newer counters.
+ */
+
+/*
+ * In case irq handlers can update u64 counters, readers can use following helpers
+ * - SMP 32bit arches use seqcount protection, irq safe.
+ * - UP 32bit must disable irqs.
+ * - 64bit have no problem atomically reading u64 values, irq safe.
+ */
+static struct rtnl_link_stats64 *
+rtl8139_get_stats64(struct net_device *dev, struct rtnl_link_stats64 *stats)
+{
+	struct rtl8139_private *tp = netdev_priv(dev);
+	void __iomem *ioaddr = tp->mmio_addr;
+	unsigned long flags;
+	unsigned int start;
+	
+	if (netif_running(dev)) {
+		spin_lock_irqsave (&tp->lock, flags);
+		dev->stats.rx_missed_errors += RTL_R32 (RxMissed);
+		RTL_W32 (RxMissed, 0);
+		spin_unlock_irqrestore (&tp->lock, flags);
+	}
+	
+	netdev_stats_to_stats64(stats, &dev->stats);
+
+	do {
+		start = u64_stats_fetch_begin_irq(&tp->rx_stats.syncp);
+		stats->rx_packets = tp->rx_stats.packets;
+		stats->rx_bytes = tp->rx_stats.bytes;
+	} while (u64_stats_fetch_retry_irq(&tp->rx_stats.syncp, start));
+	do {
+		start = u64_stats_fetch_begin_irq(&tp->tx_stats.syncp);
+		stats->tx_packets = tp->tx_stats.packets;
+		stats->tx_bytes = tp->tx_stats.bytes;
+	} while (u64_stats_fetch_retry_irq(&tp->tx_stats.syncp, start));
+	
+	return stats;
 }
 /*
  * Helpers for hash table generation of ethernet nics:
