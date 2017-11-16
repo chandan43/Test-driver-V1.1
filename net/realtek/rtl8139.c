@@ -906,6 +906,12 @@ static const struct net_device_ops rtl8139_netdev_ops = {
  * *any* of the other NAPI-related functions.
  */
 /* New device inserted : probe function -*/
+/**
+ *  netif_napi_del - remove a napi context
+ *  @napi: napi context
+ *
+ *  netif_napi_del() removes a napi context from the network device napi list
+ */
 static int  rtl8139_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
 	struct net_device *dev = NULL;
@@ -983,9 +989,99 @@ static int  rtl8139_init_one(struct pci_dev *pdev, const struct pci_device_id *e
 
 	/* note: tp->chipset set in rtl8139_init_board */
 	tp->drv_flags = board_info[ent->driver_data].hw_flags;
-		
+	tp->mmio_addr = ioaddr;
+	tp->msg_enable =
+		(debug < 0 ? RTL8139_DEF_MSG_ENABLE : ((1 << debug) - 1));	
+	spin_lock_init (&tp->lock);
+	spin_lock_init (&tp->rx_lock);
+	INIT_DELAYED_WORK(&tp->thread, rtl8139_thread); /*Init delayed work*/
+	tp->mii.dev = dev;
+	tp->mii.mdio_read = mdio_read;
+	tp->mii.mdio_write = mdio_write;
+
+	tp->mii.phy_id_mask = 0x3f;  //6 bit Phy : This to drive, this is considered to have multiple PHY SMI bus. 
+	tp->mii.reg_num_mask = 0x1f; //5 bit RA	
+	/* dev is fully set up and ready to use now */
+	pr_debug("about to register device named %s (%p)...\n",
+		 dev->name, dev);
+	/* register a network device  :  Take a completed network device structure and add it to the kernel interfaces.  
+	A NETDEV_REGISTER message is sent to the netdev notifier chain.0 is returned on success. A negative  errno code 
+        is returned on a failure to set up the device, or if the name is a duplicate.This is a wrapper around 
+	register_netdevice that takes the rtnl semaphore and expands the device name if you passed a format string to 
+	alloc_netdev. 
+	*/
+	i = register_netdev (dev);
+	if (i) 
+		goto err_out;
+	/* Similar to the helpers above, these manipulate per-pci_dev
+ 	* driver-specific data.  They are really just a wrapper around
+ 	* the generic device structure functions of these calls.
+ 	*/
+	pci_set_drvdata (pdev, dev);
+	netdev_info(dev, "%s at 0x%p, %pM, IRQ %d\n",
+		    board_info[ent->driver_data].name,
+		    ioaddr, dev->dev_addr, pdev->irq);
+	netdev_dbg(dev, "Identified 8139 chip type '%s'\n",
+		   rtl_chip_info[tp->chipset].name);
 	
+	/* Find the connected MII xcvrs.
+	   Doing this in open() would allow detecting external xcvrs later, but
+	   takes too much time. */
+#ifdef CONFIG_8139TOO_8129
+	if (tp->drv_flags & HAS_MII_XCVR) {
+		int phy, phy_idx = 0;
+		for (phy = 0; phy < 32 && phy_idx < sizeof(tp->phys); phy++) {
+			int mii_status = mdio_read(dev, phy, 1);
+			if (mii_status != 0xffff  &&  mii_status != 0x0000) {
+				u16 advertising = mdio_read(dev, phy, 4);
+				tp->phys[phy_idx++] = phy;
+				netdev_info(dev, "MII transceiver %d status 0x%04x advertising %04x\n",
+					    phy, mii_status, advertising);
+			}
+		}
+		if (phy_idx == 0) {
+			netdev_info(dev, "No MII transceivers found! Assuming SYM transceiver\n");
+			tp->phys[0] = 32;
+		}	
+		
+	}else
+#endif
+	tp->phys[0] = 32;
+	tp->mii.phy_id = tp->phys[0];
+	/* The lower four bits are the media type. */
+	option = (board_idx >= MAX_UNITS) ? 0 : media[board_idx];
+	if (option > 0) {
+		tp->mii.full_duplex = (option & 0x210) ? 1 : 0; /*  Basic Mode Control Register  p.g : 34*/
+		tp->default_port = option & 0xFF;
+		if (tp->default_port)
+			tp->mii.force_media = 1; /* is autoneg. disabled? */
+	}
+	if (board_idx < MAX_UNITS  &&  full_duplex[board_idx] > 0)
+		tp->mii.full_duplex = full_duplex[board_idx];
+	if (tp->mii.full_duplex) {
+		netdev_info(dev, "Media type forced to Full Duplex\n");
+		/* Changing the MII-advertised media because might prevent
+		   re-connection. */
+		tp->mii.force_media = 1;
+	}
+	if (tp->default_port) {
+		netdev_info(dev, "  Forcing %dMbps %s-duplex operation\n",
+			    (option & 0x20 ? 100 : 10),
+			    (option & 0x10 ? "full" : "half")); /*  Basic Mode Control Register : full : bit 8 bit ,100 : 13 bit page : 63 -refer RTL8139CL+ manual */ 
+		mdio_write(dev, tp->phys[0], 0,
+				   ((option & 0x20) ? 0x2000 : 0) | 	/* 100Mbps? */
+				   ((option & 0x10) ? 0x0100 : 0)); /* Full duplex? */
+	}
+	/* Put the chip into low-power mode. */
+	if (rtl_chip_info[tp->chipset].flags & HasHltClk)
+		RTL_W8 (HltClk, 'H');	/* 'R' would leave the clock running. */
+		
 	return 0;
+err_out:
+	netif_napi_del(&tp->napi); /* remove a napi context */
+	__rtl8139_cleanup_dev (dev);
+	pci_disable_device (pdev);
+	return i;
 }
 static void rtl8139_remove_one(struct pci_dev *dev)
 {
