@@ -9,6 +9,16 @@
 #include <linux/rtnetlink.h>
 #include <linux/delay.h>
 #include <linux/mii.h>
+#include <linux/kernel.h>
+#include <linux/interrupt.h>
+#include <linux/rtnetlink.h>
+#include <linux/completion.h>
+#include <linux/completion.h>
+#include <linux/crc32.h>
+#include <linux/io.h>
+#include <linux/uaccess.h>
+#include <linux/gfp.h>
+#include <asm/irq.h>
 
 #define DRV_NAME	"realtek8139"
 #define DRV_VERSION	".1"
@@ -238,7 +248,7 @@ enum RTL8139_registers {
 	PARA7c		= 0x7c,	 /* Magic transceiver parameter register. :Twister parameter*/
 	Config5		= 0xD8,	 /* absent on RTL-8139A */
 };
-/*MultiInt is true when MulERINT=0 (bit17, RCR). When MulERINT=1, any received packetinvokes early interrupt according to the MISR[11:0] setting in early mode*/.
+/*MultiInt is true when MulERINT=0 (bit17, RCR). When MulERINT=1, any received packetinvokes early interrupt according to the MISR[11:0] setting in early mode*/
 /*Command Register : Bit : 0 -R- BUFE- Buffer Empty , 1-Reserved ,2-R/W-TE,Transmitter Enable: When set to 1,3-R/W-RE,Receiver Enable: When set to 1, 4-R/W-RST-Reset: Setting to 1 forces,7-5:Reserved*/
 /*Config1Clear: Bit : 0 R/W PMEn - Power Management Enable(No change), 1 R/W VPD Set to enable Vital Product Data,2-R-IOMAP: I/O Mapping, 3-R-MEMMAP : Memory Mapping ,4-R/W LWACT: LWAKE active mode: 5-R/W-DV RLOAD : Driver Load, 7-6 : R/W- LEDS1-0 Refer to LED PIN definition*/
 enum ClearBitMasks {
@@ -303,6 +313,28 @@ enum RxStatusBits {
 	RxBadAlign	= 0x0002,
 	RxStatusOK	= 0x0001,
 };
+/*
+
+Receive Configuration Register: 
+AcceptErr : bit 5 Accept Error Packets : 1: Accept error packets
+AcceptRunt : bit 4 Accept Runt Packets: 1: Accept runt packets
+AcceptBroadcast :bit 3 Accept Broadcast Packets 
+AcceptMulticast : bit 2 Accept Multicast Packets:
+AcceptMyPhys : bit 1 Accept Physical Match Packets
+AcceptAllPhys : bit 0 Accept Physical Address Packets
+
+*/
+
+/* Bits in RxConfig. */
+enum rx_mode_bits {
+	AcceptErr	= 0x20,
+	AcceptRunt	= 0x10,
+	AcceptBroadcast	= 0x08,
+	AcceptMulticast	= 0x04,
+	AcceptMyPhys	= 0x02,
+	AcceptAllPhys	= 0x01,
+};
+
 /* Bits in TxConfig. */
 /* Interframe Gap Time: This field allows the user to adjust the interframe gap time below the standard: 9.6 us for 10Mbps, 960 ns for 100Mbps. The time can be programmed from 9.6 us to 8.4 us (10Mbps)
    and 960ns to 840ns (100Mbps). Note that any value other than (1, 1) will violate the IEEE 802.3 standard. The formula for the inter frame gap is:
@@ -430,7 +462,7 @@ enum CSCRBits {
 	CSCR_LinkStatusBits	= 0x0f000,
 	CSCR_LinkDownOffCmd	= 0x003c0,
 	CSCR_LinkDownCmd	= 0x0f3c0,
-}
+};
 /*
   9346CR: 93C46 Command Register : Bit 7-6 , R/W EEM1-0 ,Operating Mode: These 2 bits select the RTL8139D(L) operating mode, 
   00 : Normal (RTL8139D(L) network/host communication
@@ -455,7 +487,7 @@ typedef enum {
 	CH_8100,
 	CH_8100B_8139D,
 	CH_8101,
-} chip_t
+} chip_t ;
 /*
   Media Status Register : 
 			HasHltClk: BIT 0 R RXPF , Receive Pause Flag: Set, when RTL8139D(L) is in backoff state because a pause packet was received. Reset, when pause state is clear.
@@ -594,6 +626,33 @@ MODULE_PARM_DESC (full_duplex, "8139too: Force full duplex for board(s) (1)");
 
 
 static int read_eeprom (void __iomem *ioaddr, int location, int addr_len);
+static int rtl8139_open (struct net_device *dev);
+static int mdio_read (struct net_device *dev, int phy_id, int location);
+static void mdio_write (struct net_device *dev, int phy_id, int location,
+			int val);
+static void rtl8139_start_thread(struct rtl8139_private *tp);
+static void rtl8139_tx_timeout (struct net_device *dev);
+static void rtl8139_init_ring (struct net_device *dev);
+static netdev_tx_t rtl8139_start_xmit (struct sk_buff *skb,
+				       struct net_device *dev);
+#ifdef CONFIG_NET_POLL_CONTROLLER
+static void rtl8139_poll_controller(struct net_device *dev);
+#endif
+static int rtl8139_set_mac_address(struct net_device *dev, void *p);
+static int rtl8139_poll(struct napi_struct *napi, int budget);
+static irqreturn_t rtl8139_interrupt (int irq, void *dev_instance);
+static int rtl8139_close (struct net_device *dev);
+static int netdev_ioctl (struct net_device *dev, struct ifreq *rq, int cmd);
+static struct rtnl_link_stats64 *rtl8139_get_stats64(struct net_device *dev,
+						    struct rtnl_link_stats64
+						    *stats);
+static void rtl8139_set_rx_mode (struct net_device *dev);
+static void __set_rx_mode (struct net_device *dev);
+static void rtl8139_hw_start (struct net_device *dev);
+static void rtl8139_thread (struct work_struct *work);
+static void rtl8139_tx_timeout_task(struct work_struct *work);
+static const struct ethtool_ops rtl8139_ethtool_ops;
+
 /* write MMIO register, with flush */
 /* Flush avoids rtl8139 bug w/ posted MMIO writes */
 #define RTL_W8_F(reg, val8)	do { iowrite8 ((val8), ioaddr + (reg)); ioread8 (ioaddr + (reg)); } while (0)
@@ -1083,9 +1142,19 @@ err_out:
 	pci_disable_device (pdev);
 	return i;
 }
-static void rtl8139_remove_one(struct pci_dev *dev)
+static void rtl8139_remove_one(struct pci_dev *pdev)
 {
-	pr_info("%s: device removed safly\n",__func__);
+	struct net_device *dev = pci_get_drvdata (pdev);
+	struct rtl8139_private *tp = netdev_priv(dev);
+	assert (dev != NULL);
+	
+	cancel_delayed_work_sync(&tp->thread);
+	netif_napi_del(&tp->napi);
+	
+	unregister_netdev (dev);
+
+	__rtl8139_cleanup_dev (dev);
+	pci_disable_device (pdev);
 }
 /* Serial EEPROM section. */
 /* 93C46 Command Register :
@@ -1147,6 +1216,129 @@ static int read_eeprom(void __iomem *ioaddr, int location, int addr_len)
 	return retval;
 
 }
+/* MII serial management: mostly bogus for now. */
+/* Read and write the MII management registers using software-generated
+   serial MDIO protocol.
+   The maximum data clock rate is 2.5 Mhz.  The minimum timing is usually
+   met by back-to-back PCI I/O cycles, but we insert a delay to avoid
+   "overclocking" issues. */
+/* Function Force Event Register/MII Register : Bit 24 to 31*/
+#define MDIO_DIR		0x80
+#define MDIO_DATA_OUT		0x04
+#define MDIO_DATA_IN		0x02
+#define MDIO_CLK		0x01
+#define MDIO_WRITE0 (MDIO_DIR)
+#define MDIO_WRITE1 (MDIO_DIR | MDIO_DATA_OUT)
+
+#define mdio_delay()	RTL_R8(Config4)
+
+static const char mii_2_8139_map[8] = {
+	BasicModeCtrl,
+	BasicModeStatus,
+	0,
+	0,
+	NWayAdvert,
+	NWayLPAR,
+	NWayExpansion,
+	0
+};
+#ifdef CONFIG_8139TOO_8129
+/* Syncronize the MII management interface by shifting 32 one bits out. */
+static void mdio_sync (void __iomem *ioaddr)
+{
+	int i;
+
+	for (i = 32; i >= 0; i--) {
+		RTL_W8 (Config4, MDIO_WRITE1);
+		mdio_delay ();
+		RTL_W8 (Config4, MDIO_WRITE1 | MDIO_CLK);
+		mdio_delay ();
+	}
+}
+
+#endif
+
+
+static int mdio_read (struct net_device *dev, int phy_id, int location)
+{
+	struct rtl8139_private *tp = netdev_priv(dev);
+	int retval = 0;
+#ifdef CONFIG_8139TOO_8129
+	void __iomem *ioaddr = tp->mmio_addr;
+	int mii_cmd = (0xf6 << 10) | (phy_id << 5) | location; /* MII Management Frame Format */
+	int i;
+#endif
+	if (phy_id > 31) {	/* Really a 8139.  Use internal registers. */
+		void __iomem *ioaddr = tp->mmio_addr;
+		return location < 8 && mii_2_8139_map[location] ?
+		    RTL_R16 (mii_2_8139_map[location]) : 0;
+	}
+
+#ifdef CONFIG_8139TOO_8129
+	mdio_sync (ioaddr);
+	/* Shift the read command bits out. */
+	for (i = 15; i >= 0; i--) {
+		int dataval = (mii_cmd & (1 << i)) ? MDIO_DATA_OUT : 0;
+
+		RTL_W8 (Config4, MDIO_DIR | dataval);
+		mdio_delay ();
+		RTL_W8 (Config4, MDIO_DIR | dataval | MDIO_CLK);
+		mdio_delay ();
+	}
+
+	/* Read the two transition, 16 data, and wire-idle bits. */
+	for (i = 19; i > 0; i--) {
+		RTL_W8 (Config4, 0);
+		mdio_delay ();
+		retval = (retval << 1) | ((RTL_R8 (Config4) & MDIO_DATA_IN) ? 1 : 0);
+		RTL_W8 (Config4, MDIO_CLK);
+		mdio_delay ();
+	}
+#endif
+	return (retval >> 1) & 0xffff;
+}
+
+static void mdio_write (struct net_device *dev, int phy_id, int location,
+			int value)
+{
+	struct rtl8139_private *tp = netdev_priv(dev);	
+
+#ifdef CONFIG_8139TOO_8129
+	void __iomem *ioaddr = tp->mmio_addr;
+	int mii_cmd = (0x5002 << 16) | (phy_id << 23) | (location << 18) | value;
+	int i;
+#endif
+	if (phy_id > 31) {	/* Really a 8139.  Use internal registers. */
+		void __iomem *ioaddr = tp->mmio_addr;
+		if (location == 0) {
+			RTL_W8 (Cfg9346, Cfg9346_Unlock);
+			RTL_W16 (BasicModeCtrl, value);
+			RTL_W8 (Cfg9346, Cfg9346_Lock);
+		} else if (location < 8 && mii_2_8139_map[location])
+			RTL_W16 (mii_2_8139_map[location], value);
+		return;
+	}
+#ifdef CONFIG_8139TOO_8129
+	mdio_sync (ioaddr);
+
+	/* Shift the command bits out. */
+	for (i = 31; i >= 0; i--) {
+		int dataval =
+		    (mii_cmd & (1 << i)) ? MDIO_WRITE1 : MDIO_WRITE0;
+		RTL_W8 (Config4, dataval);
+		mdio_delay ();
+		RTL_W8 (Config4, dataval | MDIO_CLK);
+		mdio_delay ();
+	}
+	/* Clear out extra bits. */
+	for (i = 2; i > 0; i--) {
+		RTL_W8 (Config4, 0);
+		mdio_delay ();
+		RTL_W8 (Config4, MDIO_CLK);
+		mdio_delay ();
+	}
+#endif
+}
 
 /**
  *	napi_enable - enable NAPI scheduling
@@ -1207,6 +1399,8 @@ static int rtl8139_open (struct net_device *dev)
 	return 0;
 	
 }
+
+
 /**
  * mii_check_media - check the MII interface for a carrier/speed/duplex change
  * @mii: the MII interface
@@ -1533,7 +1727,7 @@ static void rtl8139_tx_timeout_task (struct work_struct *work)
 		   RTL_R8(ChipCmd), RTL_R16(IntrStatus),
 		   RTL_R16(IntrMask), RTL_R8(MediaStatus));
 	/* Emit info to figure out what went wrong. */
-	etdev_dbg(dev, "Tx queue start entry %ld  dirty entry %ld\n",
+	netdev_dbg(dev, "Tx queue start entry %ld  dirty entry %ld\n",
 		   tp->cur_tx, tp->dirty_tx);
 	for (i = 0; i < NUM_TX_DESC; i++)
 		netdev_dbg(dev, "Tx descriptor %d is %08x%s\n",
@@ -1867,7 +2061,7 @@ keep_pkt:
 			skb_copy_to_linear_data (skb, &rx_ring[ring_offset + 4], pkt_size);  //memcpy(skb->data, from, len);
 #endif
 			skb_put (skb, pkt_size); /*  add data to a buffer */
-			skb->protocol = eth_type_trans (skb, dev);i /*  determine the packet's protocol ID. */
+			skb->protocol = eth_type_trans (skb, dev); /*  determine the packet's protocol ID. */
 			u64_stats_update_begin(&tp->rx_stats.syncp);  //Perform non atomic operation after 
 			tp->rx_stats.packets++;
 			tp->rx_stats.bytes += pkt_size;
@@ -1907,7 +2101,8 @@ static void rtl8139_weird_interrupt (struct net_device *dev,
 				     void __iomem *ioaddr,
 				     int status, int link_changed)
 {
-	netdev_dbg(deve "Abnormal interrupt, status %08x\n", status);	
+	netdev_dbg(dev,"Abnormal interrupt, status %08x\n", status);
+
 	assert (dev != NULL);
 	assert (tp != NULL);
 	assert (ioaddr != NULL);
@@ -1922,7 +2117,7 @@ static void rtl8139_weird_interrupt (struct net_device *dev,
 	if (status & (RxUnderrun | RxErr))
 		dev->stats.rx_errors++;
 	if (status & PCSTimeout)
-		dev->stats.rx_length_errors++
+		dev->stats.rx_length_errors++;
 	if (status & RxUnderrun)
 		dev->stats.rx_fifo_errors++;
 	if (status & PCIErr) {
@@ -1990,7 +2185,7 @@ static irqreturn_t rtl8139_interrupt (int irq, void *dev_instance)
 	/* shared irq? */
 	if (unlikely((status & rtl8139_intr_mask) == 0))
 		goto out;
-	ndled = 1;	
+	handled = 1;	
 	/* h/w no longer present (hotplug?) or major error, bail */
 	if (unlikely(status == 0xFFFF))
 		goto out;
@@ -2302,7 +2497,7 @@ module_exit(rtl8139_cleanup_module);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR ("Chandan Jha <beingchandanjha@gmail.com>");
-MODULE_DESCRIPTION ("RealTek RTL-8139 Fast Ethernet driver");
+MODULE_DESCRIPTION ("RealTek RTL-8139 Fast Ethernet driver: Rewritten  for better understanding of code");
 MODULE_VERSION(DRV_VERSION);
 
 
