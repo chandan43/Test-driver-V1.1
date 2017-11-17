@@ -1892,9 +1892,86 @@ static void rtl8139_tx_interrupt (struct net_device *dev,
 	} 
 }
 
+/* TODO: clean this up!  Rx reset need not be this intensive */
+static void rtl8139_rx_err (u32 rx_status, struct net_device *dev,
+			    struct rtl8139_private *tp, void __iomem *ioaddr)
+{
+	u8 tmp8;
+#ifdef CONFIG_8139_OLD_RX_RESET
+	int tmp_work;
+#endif
+	netif_dbg(tp, rx_err, dev, "Ethernet frame had errors, status %08x\n",
+		  rx_status);
+	dev->stats.rx_errors++;
+	if (!(rx_status & RxStatusOK)) { /* if rx error */
+		if (rx_status & RxTooLong) {
+			netdev_dbg(dev, "Oversized Ethernet frame, status %04x!\n",
+				   rx_status);
+			/* A.C.: The chip hangs here. */
+		}
+		if (rx_status & (RxBadSymbol | RxBadAlign))  /*   Invalid Symbol Error | Frame Alignment Error */
+			dev->stats.rx_frame_errors++;
+		if (rx_status & (RxRunt | RxTooLong))       /* Runt Packet Received | Long Packet */
+			dev->stats.rx_length_errors++;
+		if (rx_status & RxCRCErr)         /* CRC Error*/
+			dev->stats.rx_crc_errors++;	
+	}else {
+		tp->xstats.rx_lost_in_ring++;
+	}
+#ifndef CONFIG_8139_OLD_RX_RESET
+	tmp8 = RTL_R8 (ChipCmd);
+	RTL_W8 (ChipCmd, tmp8 & ~CmdRxEnb);
+	RTL_W8 (ChipCmd, tmp8);
+	RTL_W32 (RxConfig, tp->rx_config);
+	tp->cur_rx = 0;	
+#else 
+	/* Reset the receiver, based on RealTek recommendation. (Bug?) */
+ 	/* disable receive */
+	RTL_W8_F (ChipCmd, CmdTxEnb);
+	tmp_work = 200;
+	while (--tmp_work > 0) {
+		udelay(1);
+		tmp8 = RTL_R8 (ChipCmd);
+		if (!(tmp8 & CmdRxEnb))
+			break;
+	}
+	if (tmp_work <= 0)
+		netdev_warn(dev, "rx stop wait too long\n");
+	/* restart receive */
+	tmp_work = 200;
+	while (--tmp_work > 0) {
+		RTL_W8_F (ChipCmd, CmdRxEnb | CmdTxEnb);
+		udelay(1);
+		tmp8 = RTL_R8 (ChipCmd);
+		if ((tmp8 & CmdRxEnb) && (tmp8 & CmdTxEnb))
+			break;
+	}
+	if (tmp_work <= 0)
+		netdev_warn(dev, "tx/rx enable wait too long\n");
+	/* and reinitialize all rx related registers */
+	RTL_W8_F (Cfg9346, Cfg9346_Unlock);
+	/* Must enable Tx/Rx before setting transfer thresholds! */
+	RTL_W8 (ChipCmd, CmdRxEnb | CmdTxEnb);
+
+	tp->rx_config = rtl8139_rx_config | AcceptBroadcast | AcceptMyPhys;
+	RTL_W32 (RxConfig, tp->rx_config);
+	tp->cur_rx = 0;
+
+	netdev_dbg(dev, "init buffer addresses\n");
+	/* Lock Config[01234] and BMCR register writes */
+	RTL_W8 (Cfg9346, Cfg9346_Lock);
+
+	/* init Rx ring buffer DMA address */
+	RTL_W32_F (RxBuf, tp->rx_ring_dma);
+
+	/* A.C.: Reset the multicast list. */
+	__set_rx_mode (dev);
+#endif
+
+}
 #if RX_BUF_IDX == 3
 static inline void wrap_copy(struct sk_buff *skb, const unsigned char *ring,
-				 u32 offset, unsigned int size)
+				 u32 offset, unsigned int size )
 {
 	u32 left = RX_BUF_LEN - offset;
 
