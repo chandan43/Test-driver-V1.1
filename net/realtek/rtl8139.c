@@ -1026,9 +1026,10 @@ static int  rtl8139_init_one(struct pci_dev *pdev, const struct pci_device_id *e
 		    cpu_to_le16(read_eeprom (ioaddr, i + 7, addr_len));
 	/* The Rtl8139-specific entries in the device structure. */
 	dev->netdev_ops = &rtl8139_netdev_ops;
-#if 0
+	
+	/*Ethtool support */
 	dev->ethtool_ops = &rtl8139_ethtool_ops;
-#endif
+
 	dev->watchdog_timeo = TX_TIMEOUT;
 	netif_napi_add(dev, &tp->napi, rtl8139_poll, 64); /* Initialize a NAPI context */	
 	
@@ -2415,6 +2416,284 @@ static int rtl8139_close (struct net_device *dev)
 
 	return 0;
 }
+
+/* Get the ethtool Wake-on-LAN settings.  Assumes that wol points to
+   kernel memory, *wol has been initialized as {ETHTOOL_GWOL}, and
+   other threads or interrupts aren't messing with the 8139.  */
+static void rtl8139_get_wol(struct net_device *dev, struct ethtool_wolinfo *wol)
+{
+	struct rtl8139_private *tp = netdev_priv(dev);
+	void __iomem *ioaddr = tp->mmio_addr;
+
+	spin_lock_irq(&tp->lock);
+	if (rtl_chip_info[tp->chipset].flags & HasLWake) {
+		u8 cfg3 = RTL_R8 (Config3);
+		u8 cfg5 = RTL_R8 (Config5);
+		wol->supported = WAKE_PHY | WAKE_MAGIC
+			| WAKE_UCAST | WAKE_MCAST | WAKE_BCAST;
+		wol->wolopts = 0;
+		if (cfg3 & Cfg3_LinkUp)
+			wol->wolopts |= WAKE_PHY;
+		if (cfg3 & Cfg3_Magic)
+			wol->wolopts |= WAKE_MAGIC;
+		/* (KON)FIXME: See how netdev_set_wol() handles the
+		   following constants.  */
+		if (cfg5 & Cfg5_UWF)
+			wol->wolopts |= WAKE_UCAST;
+		if (cfg5 & Cfg5_MWF)
+			wol->wolopts |= WAKE_MCAST;
+		if (cfg5 & Cfg5_BWF)
+			wol->wolopts |= WAKE_BCAST;
+	}
+	spin_unlock_irq(&tp->lock);
+}
+
+#if 0
+/* Wake-On-Lan options. */
+#define WAKE_PHY		(1 << 0)
+#define WAKE_UCAST		(1 << 1)
+#define WAKE_MCAST		(1 << 2)
+#define WAKE_BCAST		(1 << 3)
+#define WAKE_ARP		(1 << 4)
+#define WAKE_MAGIC		(1 << 5)
+#define WAKE_MAGICSECURE	(1 << 6) /* only meaningful if WAKE_MAGIC */
+#endif 
+
+/**
+ * struct ethtool_wolinfo - Wake-On-Lan configuration
+ * @cmd: Command number = %ETHTOOL_GWOL or %ETHTOOL_SWOL
+ * @supported: Bitmask of %WAKE_* flags for supported Wake-On-Lan modes.
+ *	Read-only.
+ * @wolopts: Bitmask of %WAKE_* flags for enabled Wake-On-Lan modes.
+ * @sopass: SecureOn(tm) password; meaningful only if %WAKE_MAGICSECURE
+ *	is set in @wolopts.
+ */
+
+/* Set the ethtool Wake-on-LAN settings.  Return 0 or -errno.  Assumes
+   that wol points to kernel memory and other threads or interrupts
+   aren't messing with the 8139.  */
+static int rtl8139_set_wol(struct net_device *dev, struct ethtool_wolinfo *wol)
+{
+	struct rtl8139_private *tp = netdev_priv(dev);
+	void __iomem *ioaddr = tp->mmio_addr;
+	u32 support;
+	u8 cfg3, cfg5;
+	support = ((rtl_chip_info[tp->chipset].flags & HasLWake)
+		   ? (WAKE_PHY | WAKE_MAGIC
+		      | WAKE_UCAST | WAKE_MCAST | WAKE_BCAST)
+		   : 0);
+	if (wol->wolopts & ~support)
+		return -EINVAL;
+	spin_lock_irq(&tp->lock);
+	cfg3 = RTL_R8 (Config3) & ~(Cfg3_LinkUp | Cfg3_Magic);
+	if (wol->wolopts & WAKE_PHY)
+		cfg3 |= Cfg3_LinkUp;
+	if (wol->wolopts & WAKE_MAGIC)
+		cfg3 |= Cfg3_Magic;
+	RTL_W8 (Cfg9346, Cfg9346_Unlock);
+	RTL_W8 (Config3, cfg3);
+	RTL_W8 (Cfg9346, Cfg9346_Lock);
+	cfg5 = RTL_R8 (Config5) & ~(Cfg5_UWF | Cfg5_MWF | Cfg5_BWF);
+	/* (KON)FIXME: These are untested.  We may have to set the
+	   CRC0, Wakeup0 and LSBCRC0 registers too, but I have no
+	   documentation.  */
+	if (wol->wolopts & WAKE_UCAST)
+		cfg5 |= Cfg5_UWF;
+	if (wol->wolopts & WAKE_MCAST)
+		cfg5 |= Cfg5_MWF;
+	if (wol->wolopts & WAKE_BCAST)
+		cfg5 |= Cfg5_BWF;
+	RTL_W8 (Config5, cfg5);	/* need not unlock via Cfg9346 */
+	spin_unlock_irq(&tp->lock);
+	
+	return 0;
+}
+static void rtl8139_get_drvinfo(struct net_device *dev, struct ethtool_drvinfo *info)
+{
+	struct rtl8139_private *tp = netdev_priv(dev);
+	strlcpy(info->driver, DRV_NAME, sizeof(info->driver));
+	strlcpy(info->version, DRV_VERSION, sizeof(info->version));
+	strlcpy(info->bus_info, pci_name(tp->pci_dev), sizeof(info->bus_info));
+}
+/**
+ * mii_ethtool_gset - get settings that are specified in @ecmd
+ * @mii: MII interface
+ * @ecmd: requested ethtool_cmd
+ *
+ * The @ecmd parameter is expected to have been cleared before calling
+ * mii_ethtool_gset().
+ *
+ * Returns 0 for success, negative on error.
+ */
+static int rtl8139_get_settings(struct net_device *dev, struct ethtool_cmd *cmd)
+{
+	struct rtl8139_private *tp = netdev_priv(dev);
+	spin_lock_irq(&tp->lock);
+	mii_ethtool_gset(&tp->mii, cmd);
+	spin_unlock_irq(&tp->lock);
+	return 0;
+}
+
+/**
+ * mii_ethtool_sset - set settings that are specified in @ecmd
+ * @mii: MII interface
+ * @ecmd: requested ethtool_cmd
+ *
+ * Returns 0 for success, negative on error.
+ */
+static int rtl8139_set_settings(struct net_device *dev, struct ethtool_cmd *cmd)
+{
+	struct rtl8139_private *tp = netdev_priv(dev);
+	int rc;
+	spin_lock_irq(&tp->lock);
+	rc = mii_ethtool_sset(&tp->mii, cmd);
+	spin_unlock_irq(&tp->lock);
+	return rc;
+}
+/**
+ * mii_nway_restart - restart NWay (autonegotiation) for this interface
+ * @mii: the MII interface
+ *
+ * Returns 0 on success, negative on error.
+ */
+static int rtl8139_nway_reset(struct net_device *dev)
+{
+	struct rtl8139_private *tp = netdev_priv(dev);
+	return mii_nway_restart(&tp->mii);
+}
+
+/**
+ * mii_link_ok - is link status up/ok
+ * @mii: the MII interface
+ *
+ * Returns 1 if the MII reports link status up/ok, 0 otherwise.
+ */
+static u32 rtl8139_get_link(struct net_device *dev)
+{
+	struct rtl8139_private *tp = netdev_priv(dev);
+	return mii_link_ok(&tp->mii);
+}
+
+
+static u32 rtl8139_get_msglevel(struct net_device *dev)
+{
+	struct rtl8139_private *tp = netdev_priv(dev);
+	return tp->msg_enable;
+}
+
+
+static void rtl8139_set_msglevel(struct net_device *dev, u32 datum)
+{
+	struct rtl8139_private *tp = netdev_priv(dev);
+	tp->msg_enable = datum;
+}
+
+static int rtl8139_get_regs_len(struct net_device *dev)
+{
+	struct rtl8139_private *tp;
+	/* TODO: we are too slack to do reg dumping for pio, for now */
+	if (use_io)
+		return 0;
+	tp = netdev_priv(dev);
+	return tp->regs_len;
+}
+static void rtl8139_get_regs(struct net_device *dev, struct ethtool_regs *regs, void *regbuf)
+{
+	struct rtl8139_private *tp;
+	/* TODO: we are too slack to do reg dumping for pio, for now */
+	if (use_io)
+		return;
+	tp = netdev_priv(dev);
+	regs->version = RTL_REGS_VER;
+
+	spin_lock_irq(&tp->lock);
+	memcpy_fromio(regbuf, tp->mmio_addr, regs->len);
+	spin_unlock_irq(&tp->lock);
+}
+/* * 	@ETH_SS_STATS: Statistic names, for use with %ETHTOOL_GSTAT 
+	#define EOPNOTSUPP      95      Operation not supported on transport endpoint 
+*/
+
+static int rtl8139_get_sset_count(struct net_device *dev, int sset)
+{
+	switch (sset) {
+	case ETH_SS_STATS:
+		return RTL_NUM_STATS;
+	default:
+		return -EOPNOTSUPP;
+	}
+}
+
+static void rtl8139_get_ethtool_stats(struct net_device *dev, struct ethtool_stats *stats, u64 *data)
+{
+	struct rtl8139_private *tp = netdev_priv(dev);
+
+	data[0] = tp->xstats.early_rx;
+	data[1] = tp->xstats.tx_buf_mapped;
+	data[2] = tp->xstats.tx_timeouts;
+	data[3] = tp->xstats.rx_lost_in_ring;
+}
+
+static void rtl8139_get_strings(struct net_device *dev, u32 stringset, u8 *data)
+{
+	memcpy(data, ethtool_stats_keys, sizeof(ethtool_stats_keys));
+}
+/*
+ * @get_drvinfo: Report driver/device information.  Should only set the
+ *	@driver, @version, @fw_version and @bus_info fields.  If not
+ *	implemented, the @driver and @bus_info fields will be filled in
+ *	according to the netdev's parent device.
+ * @get_settings: DEPRECATED, use %get_link_ksettings/%set_link_ksettings
+ *	API. Get various device settings including Ethernet link
+ *	settings. The @cmd parameter is expected to have been cleared
+ *	before get_settings is called. Returns a negative error code
+ *	or zero.
+ * @set_settings: DEPRECATED, use %get_link_ksettings/%set_link_ksettings
+ *	API. Set various device settings including Ethernet link
+ *	settings.  Returns a negative error code or zero.
+ * @get_regs_len: Get buffer length required for @get_regs
+ * @get_regs: Get device registers
+ * @nway_reset: Restart autonegotiation.  Returns a negative error code
+ *	or zero.
+ * @get_link: Report whether physical link is up.  Will only be called if
+ *	the netdev is up.  Should usually be set to ethtool_op_get_link(),
+ *	which uses netif_carrier_ok().
+ * @get_msglevel: Report driver message level.  This should be the value
+ *	of the @msg_enable field used by netif logging functions.
+ * @set_msglevel: Set driver message level
+ * @get_strings: Return a set of strings that describe the requested objects
+ * @get_ethtool_stats: Return extended statistics about the device.
+ *	This is only useful if the device maintains statistics not
+ *	included in &struct rtnl_link_stats64.
+ * @get_sset_count: Get number of strings that @get_strings will write.
+ * @get_wol: Report whether Wake-on-Lan is enabled
+ * @set_wol: Turn Wake-on-Lan on or off.  Returns a negative error code
+ *	or zero.
+ *
+ * All operations are optional (i.e. the function pointer may be set
+ * to %NULL) and callers must take this into account.  Callers must
+ * hold the RTNL lock.
+ *
+ * See &struct net_device and &struct net_device_ops for documentation
+ * of the generic netdev features interface.
+ */
+static const struct ethtool_ops rtl8139_ethtool_ops = {
+	.get_drvinfo		= rtl8139_get_drvinfo,
+	.get_settings		= rtl8139_get_settings,
+	.set_settings		= rtl8139_set_settings,
+	.get_regs_len		= rtl8139_get_regs_len,
+	.get_regs		= rtl8139_get_regs,
+	.nway_reset		= rtl8139_nway_reset,
+	.get_link		= rtl8139_get_link,
+	.get_msglevel		= rtl8139_get_msglevel,
+	.set_msglevel		= rtl8139_set_msglevel,
+	.get_wol		= rtl8139_get_wol,
+	.set_wol		= rtl8139_set_wol,
+	.get_strings		= rtl8139_get_strings,
+	.get_sset_count		= rtl8139_get_sset_count,
+	.get_ethtool_stats	= rtl8139_get_ethtool_stats,
+};
+
 /**
  * generic_mii_ioctl - main MII ioctl interface
  * @mii_if: the MII interface
@@ -2548,11 +2827,100 @@ static void rtl8139_set_rx_mode (struct net_device *dev)
 	__set_rx_mode(dev);
 	spin_unlock_irqrestore (&tp->lock, flags);
 }
+
+
+#ifdef CONFIG_PM
+
+/**
+ * pci_save_state - save the PCI configuration space of a device before suspending
+ * @dev: - PCI device that we're dealing with
+ */
+/**
+ * netif_device_detach - mark device as removed
+ * @dev: network device
+ *
+ * Mark device as removed from system and therefore no longer available.
+ */
+ /**
+ * pci_set_power_state - Set the power state of a PCI device
+ * @dev: PCI device to handle.
+ * @state: PCI power state (D0, D1, D2, D3hot) to put the device into.
+ *
+ * Transition a device to a new power state, using the platform firmware and/or
+ * the device's PCI PM registers.
+ *
+ * RETURN VALUE:
+ * -EINVAL if the requested state is invalid.
+ * -EIO if device does not support PCI PM or its PM capabilities register has a
+ * wrong version, or device doesn't support the requested state.
+ * 0 if device already is in the requested state.
+ * 0 if device's power state has been successfully changed.
+ */
+ /*While in D1-D3hot the standard configuration registers of the device must be accessible to software
+  (i.e. the device is required to respond to PCI configuration accesses), although
+   its I/O and memory spaces are then disabled.
+ */
+static int rtl8139_suspend (struct pci_dev *pdev, pm_message_t state)
+{
+	struct net_device *dev = pci_get_drvdata (pdev);
+	struct rtl8139_private *tp = netdev_priv(dev);
+	void __iomem *ioaddr = tp->mmio_addr;
+	unsigned long flags;
+	
+	pci_save_state (pdev);
+
+	if (!netif_running (dev))
+		return 0;
+
+	netif_device_detach (dev);		
+		
+	spin_lock_irqsave (&tp->lock, flags);
+	
+	/* Disable interrupts, stop Tx and Rx. */
+	RTL_W16 (IntrMask, 0);
+	RTL_W8 (ChipCmd, 0);
+	
+	/* Update the error counts. */
+	dev->stats.rx_missed_errors += RTL_R32 (RxMissed);
+	RTL_W32 (RxMissed, 0);
+	
+	spin_unlock_irqrestore (&tp->lock, flags);
+	
+	pci_set_power_state (pdev, PCI_D3hot);
+
+	return 0;
+}
+
+/**
+ * pci_restore_state - Restore the saved state of a PCI device
+ * @dev: - PCI device that we're dealing with
+ */
+
+static int rtl8139_resume (struct pci_dev *pdev)
+{
+	struct net_device *dev = pci_get_drvdata (pdev);
+	
+	pci_restore_state (pdev);
+	
+	if (!netif_running (dev))
+		return 0;
+	pci_set_power_state (pdev, PCI_D0);
+	rtl8139_init_ring (dev);
+	rtl8139_hw_start (dev);
+	netif_device_attach (dev);
+	return 0;
+}
+
+#endif /* CONFIG_PM */
 static struct pci_driver rtl8139_pci_driver = {
 	.name           = DRV_NAME,
 	.id_table	= rtl8139_pci_tbl,
 	.probe		= rtl8139_init_one,
 	.remove		= rtl8139_remove_one,
+#ifdef  CONFIG_PM
+	.suspend	= rtl8139_suspend,
+	.resume		= rtl8139_resume,
+#endif /* CONFIG_PM */
 };
 
 /*register a pci driver ::- on Success return 0 otherwise errorno*/
