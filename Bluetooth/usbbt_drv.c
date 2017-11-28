@@ -53,6 +53,13 @@ static struct usb_driver btusb_driver;
  * This macro is used to create a struct usb_device_id that matches a
  * specific device.
  */
+/*The Bluetooth host and Bluetooth controller communicate with the help of the HCI. 
+  It contains drivers that  abstract and transfer data between the Bluetooth host and 
+  the Bluetooth controller. These drivers implement communication between the Bluetooth 
+  host and the Bluetooth controller with a small set of functions that send and receive 
+  commands, data packets and events.Communication between the host and the controller 
+  is done through HCI packets, of which there are four types.
+ */
 
 static const struct usb_device_id btusb_table[] = {
 	/* Generic Bluetooth USB device*/
@@ -187,14 +194,48 @@ struct btusb_data {
 	int isoc_altsetting;
 	int suspend_count;
 };
+/* ACL= Asynchronous Connection-Less. SCO = Synchronous Connection Oriented.
+   SCO is Point to Point Connection between only one master and only one slave.
+   ACL is multipoint connection between one master and many slaves.
+*/
+/*test_bit() will return 1 or 0 to denotewhether a bit is set or not in a bitmap.*/
 static void btusb_work(struct work_struct *work)
 {
 	struct btusb_data *data = container_of(work, struct btusb_data, work);
 	struct hci_dev *hdev = data->hdev;
 	int err;
 		
-	
-
+	if (hdev->conn_hash.sco_num > 0) {
+		if(!test_bit(BTUSB_DID_ISO_RESUME, &data->flags)){
+			err = usb_autopm_get_interface(data->isoc ? data->isoc : data->intf);
+			if(err < 0){
+				clear_bit(BTUSB_ISOC_RUNNING, &data->flags); 
+				usb_kill_anchored_urbs(&data->isoc_anchor);
+				return;
+			}
+			set_bit(BTUSB_DID_ISO_RESUME, &data->flags);
+		}
+		if(data->isoc_altsetting != 2) {
+			clear_bit(BTUSB_ISOC_RUNNING, &data->flags);
+			usb_kill_anchored_urbs(&data->isoc_anchor);
+			
+			if (__set_isoc_interface(hdev, 2) < 0)     //TODO
+				return;
+		}
+		if (!test_and_set_bit(BTUSB_ISOC_RUNNING, &data->flags)) {  // Set a bit and return its old value : if unset 
+			if (btusb_submit_isoc_urb(hdev, GFP_KERNEL) < 0)    //TODO
+				clear_bit(BTUSB_ISOC_RUNNING, &data->flags);
+			else
+				btusb_submit_isoc_urb(hdev, GFP_KERNEL);   //TODO	
+		}
+	}else {
+		clear_bit(BTUSB_ISOC_RUNNING, &data->flags);
+		usb_kill_anchored_urbs(&data->isoc_anchor);
+		
+		__set_isoc_interface(hdev, 0);
+		if (test_and_clear_bit(BTUSB_DID_ISO_RESUME, &data->flags))
+			usb_autopm_put_interface(data->isoc ? data->isoc : data->intf);
+	}
 }
 /**
  * usb_autopm_get_interface - increment a USB interface's PM-usage counter
@@ -539,6 +580,6 @@ module_param(reset, bool, 0644);
 MODULE_PARM_DESC(reset, "Send HCI reset command on initialization");
 
 MODULE_AUTHOR("Chandan Jha <beingchandanjha@gmail.com>");
-MODULE_DESCRIPTION("Generic Bluetooth USB driver");
+MODULE_DESCRIPTION("Generic Bluetooth USB driver : Rewritten  for better understanding of code"");
 MODULE_VERSION(".1");
 MODULE_LICENSE("GPL");
