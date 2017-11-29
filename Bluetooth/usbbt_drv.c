@@ -194,6 +194,50 @@ struct btusb_data {
 	int isoc_altsetting;
 	int suspend_count;
 };
+/**
+ * usb_set_interface - Makes a particular alternate setting be current
+ * @dev: the device whose interface is being updated
+ * @interface: the interface being updated
+ * @alternate: the setting being chosen.
+ * Context: !in_interrupt ()
+ */
+static inline int __set_isoc_interface(struct hci_dev *hdev, int altsetting)
+{
+	struct btusb_data *data = hci_get_drvdata(hdev);
+	struct usb_interface *intf = data->isoc;
+	struct usb_endpoint_descriptor *ep_desc;
+	int i, err;
+	if (!data->isoc)
+		return -ENODEV;
+	err = usb_set_interface(data->udev, 1, altsetting);
+	if(err < 0){
+		BT_ERR("%s setting interface failed (%d)", hdev->name, -err);
+		return err;
+	}
+	data->isoc_altsetting = altsetting;
+
+	data->isoc_tx_ep = NULL;
+	data->isoc_rx_ep = NULL;
+	for (i = 0; i < intf->cur_altsetting->desc.bNumEndpoints; i++) {
+		ep_desc = &intf->cur_altsetting->endpoint[i].desc;
+		
+		if(!data->isoc_tx_ep &&  usb_endpoint_is_isoc_out(ep_desc)){
+			data->isoc_tx_ep = ep_desc;
+			continue;
+		}
+		if(!data->isoc_rx_ep && usb_endpoint_is_isoc_in(ep_desc)){
+			data->isoc_rx_ep = ep_desc;
+			continue;
+		}
+	}
+	
+	if(!data->isoc_tx_ep ||  !data->isoc_rx_ep ){
+		BT_ERR("%s invalid SCO descriptors", hdev->name);
+		return -ENODEV;
+	}
+
+	return 0;
+}
 /* ACL= Asynchronous Connection-Less. SCO = Synchronous Connection Oriented.
    SCO is Point to Point Connection between only one master and only one slave.
    ACL is multipoint connection between one master and many slaves.
