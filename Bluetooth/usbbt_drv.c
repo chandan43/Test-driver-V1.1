@@ -195,6 +195,32 @@ struct btusb_data {
 	int suspend_count;
 };
 /**
+ * schedule_work - put work task in global workqueue
+ * @work: job to be done
+ *
+ * Returns zero if @work was already on the kernel-global workqueue and
+ * non-zero otherwise.
+ *
+ * This puts a job in the kernel-global workqueue if it was not already
+ * queued and leaves it in the same position on the kernel-global
+ * workqueue otherwise.
+ */
+		
+struct void btusb_notify(struct hci_dev *hdev, unsigned int evt)
+{
+	struct btusb_data *data = hci_get_drvdata(hdev);
+
+	BT_DBG("%s evt %d", hdev->name, evt);
+	
+	if(hdev->conn_hash.sco_num != data->sco_num){
+		data->sco_num = hdev->conn_hash.sco_num;
+		schedule_work(&data->work);
+	}
+}
+	
+		
+
+/**
  * usb_set_interface - Makes a particular alternate setting be current
  * @dev: the device whose interface is being updated
  * @interface: the interface being updated
