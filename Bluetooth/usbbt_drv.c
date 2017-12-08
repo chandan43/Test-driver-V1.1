@@ -1,7 +1,11 @@
+/* This driver is based on the 2.6.3 version of drivers drivers/bluetooth/btusb.c
+ * but has been rewritten to be easier to read and use
+ */
+
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
-#include <linux/slab.h>
+#include <linux/snvb.h>
 #include <linux/spinlock.h>
 #include <linux/usb.h>
 
@@ -194,6 +198,203 @@ struct btusb_data {
 	int isoc_altsetting;
 	int suspend_count;
 };
+
+/* spin_lock_irqsave is basically used to save the interrupt state 
+ * before taking the spin lock, this is because spin lock disables 
+ * the interrupt, when the lock is taken in interrupt context, and 
+ * re-enables it when while unlocking. The interrupt state is saved 
+ * so that it should reinstate the interrupts again. 
+ */
+static int inc_tx(struct btusb_data *data)
+{
+	unsigned long flags;
+	int rv;
+	spin_lock_irqsave(&data->txlock, flags);
+
+	rv = test_bit(BTUSB_SUSPENDING, &data->flags);
+	if(!rv)
+		data->tx_in_flight++;
+	spin_unlock_irqrestore(&data->txlock, flags);
+	return rv;
+}
+/**
+ * struct usb_ctrlrequest - SETUP data for a USB device control request
+ * @bRequestType: matches the USB bmRequestType field
+ * @bRequest: matches the USB bRequest field
+ * @wValue: matches the USB wValue field (le16 byte order)
+ * @wIndex: matches the USB wIndex field (le16 byte order)
+ * @wLength: matches the USB wLength field (le16 byte order)
+ *
+ * This structure is used to send control requests to a USB device.  It matches
+ * the different fields of the USB 2.0 Spec section 9.3, table 9-2.  See the
+ * USB spec for a fuller description of the different fields, and what they are
+ * used for.
+ *
+ * Note that the driver for any interface can issue control requests.
+ * For most devices, interfaces don't coordinate with each other, so
+ * such requests may be made at any time.
+struct usb_ctrlrequest {
+	__u8 bRequestType;
+	__u8 bRequest;
+	__le16 wValue;
+	__le16 wIndex;
+	__le16 wLength;
+} __attribute__ ((packed));
+ * usb_fill_control_urb - initializes a control urb
+ * @urb: pointer to the urb to initialize.
+ * @dev: pointer to the struct usb_device for this urb.
+ * @pipe: the endpoint pipe
+ * @setup_packet: pointer to the setup_packet buffer
+ * @transfer_buffer: pointer to the transfer buffer
+ * @buffer_length: length of the transfer buffer
+ * @complete_fn: pointer to the usb_complete_t function
+ * @context: what to set the urb context to.
+ *
+ * Initializes a control urb with the proper information needed to submit
+ * it to a device.
+ */
+/**
+ * usb_anchor_urb - anchors an URB while it is processed
+ * @urb: pointer to the urb to anchor
+ * @anchor: pointer to the anchor
+ *
+ * This can be called to have access to URBs which are to be executed
+ * without bothering to track them
+ */
+/*
+	A USB driver needs to support some callbacks requiring
+	a driver to cease all IO to an interface. To do so, a
+	driver has to keep track of the URBs it has submitted
+	to know they've all completed or to call usb_kill_urb
+	for them. The anchor is a data structure takes care of
+	keeping track of URBs and provides methods to deal with
+	multiple URBs.
+	
+	An association of URBs to an anchor is made by an explicit
+	call to usb_anchor_urb(). The association is maintained until
+	an URB is finished by (successful) completion.
+*/
+ /* This submits a transfer request, and transfers control of the URB
+  * describing that request to the USB subsystem.  Request completion will
+  * be indicated later, asynchronously, by calling the completion handler.
+  * The three types of completion are success, error, and unlink
+  * (a software-induced fault, also called "request cancellation").
+  */
+ /*The driver marks the device busy as it receives data and then processes 
+   the received data. This way, autosuspend is attempted only if no input 
+   or output was performed for the duration of the configurable delay.
+ 
+   Waking up a device has some cost in time and power; it takes about 40ms 
+   to wake up the device. Therefore staying in the suspended mode for less 
+   than a few seconds is not sensible. As already mentioned, there's a 
+   configurable delay between the time the counters reach zero and autosuspend 
+   is attempted. When using remote wakeup, however, the counters remain at zero 
+   all the time unless they are incremented due to output. Yet a delay after the 
+   last time a device is busy, that is, does I/O, and the next attempt to autosuspend 
+   the device is highly desirable.
+*/
+int btusb_send_frame(struct sk_buff *skb)
+{
+	struct hci_dev *hdev = (struct hci_dev *) skb->dev;
+	struct btusb_data *data = hci_get_drvdata(hdev);
+	struct usb_ctrlrequest *dr; /*SETUP data for a USB device control request */
+	struct urb *urb; /* The basic idea of the new driver is message passing,  */
+	unsigned int pipe;
+	int err;
+
+	BT_DBG("%s", hdev->name);
+
+	if(!test_bit(HCI_RUNNING, &hdev->flags ))  //Means HCI is not running .!
+		return -EBUSY;
+	/* Common control buffer , free to use any layer
+	 * Bluetooth proto is also use 
+	 * bt_cb(skb) (struct bt_skb_cb *)((skb)->cb))*/
+	switch(bt_cb(skb)->pkt_type){
+		/*Command send to host to bluetooth */
+		case HCI_COMMAND_PKT:
+			urb = usb_alloc_urb(0, GFP_ATOMIC); /* URBs are allocated : Param2: The number of isochronous transfer frames you want to schedule.*/
+			if (!urb)
+				return -ENOMEM;
+			dr=kmalloc(sizeof(*dr),GFP_ATOMIC);
+			if(!dr){
+				usb_free_urb(urb);
+				return -ENOMEM;
+			}
+			dr->bRequestType = data->cmdreq_type;
+			dr->bRequest     = 0;
+			dr->wIndex       = 0;
+			dr->wValue       = 0;
+			dr->wLength      = __cpu_to_le16(skb->len);
+			/* Create pipes... */
+			pipe = usb_sndctrlpipe(data->udev, 0x00);
+			/* initializes a control urb */
+			usb_fill_control_urb(urb, data->udev, pipe, (void *) dr,
+				skb->data, skb->len, btusb_tx_complete, skb);
+			hdev->stat.cmd_tx++;
+			break;
+		/*Asyncronous data which is  sent to device */
+		case HCI_ACLDATA_PKT:
+			if(!data->bulk_tx_ep)
+				return -ENODEV;
+			urb = usb_alloc_urb(0, GFP_ATOMIC); /* URBs are allocated : Param2: The number of isochronous transfer frames you want to schedule.*/
+			if (!urb)
+				return -ENOMEM;
+			pipe = usb_sndbulkpipe(data->udev,
+					data->bulk_tx_ep->bEndpointAddress);
+			usb_fill_bulk_urb(urb, data->udev, pipe,
+				skb->data, skb->len, btusb_tx_complete, skb);
+
+			hdev->stat.acl_tx++;
+			break;	
+		/* syncronous data which is  sent or receive to device*/
+		case HCI_SCODATA_PKT:
+			if (!data->isoc_tx_ep || hdev->conn_hash.sco_num < 1)
+				return -ENODEV;
+
+			urb = usb_alloc_urb(BTUSB_MAX_ISOC_FRAMES, GFP_ATOMIC);
+			if (!urb)
+				return -ENOMEM
+			usb_fill_int_urb(urb, data->udev, pipe,
+				skb->data, skb->len, btusb_isoc_tx_complete,
+				skb, data->isoc_tx_ep->bInterval);
+
+			urb->transfer_flags  = URB_ISO_ASAP;
+			__fill_isoc_descriptor(urb, skb->len,                                //TODO
+					le16_to_cpu(data->isoc_tx_ep->wMaxPacketSize));
+			hdev->stat.sco_tx++;
+			goto skip_waking;
+		default:
+			return -EILSEQ;
+		}
+	err = inc_tx(data);
+	if (err) {
+		usb_anchor_urb(urb, &data->deferred);
+		schedule_work(&data->waker);
+		err = 0;
+		goto done;
+	}
+
+skip_waking:
+	usb_anchor_urb(urb, &data->tx_anchor);
+	/*An association of URBs to an anchor is made by an explicit
+          call to usb_anchor_urb(). The association is maintained until
+	  an URB is finished by (successful) completion.*/
+	err = usb_submit_urb(urb, GFP_ATOMIC);
+	if (err < 0) {
+		if (err != -EPERM && err != -ENODEV)
+			BT_ERR("%s urb %p submission failed (%d)",
+						hdev->name, urb, -err);
+		kfree(urb->setup_packet);
+		usb_unanchor_urb(urb);
+	} else {
+		usb_mark_last_busy(data->udev);
+	}
+done:
+	usb_free_urb(urb);
+	return err;
+}	
+
+
 /**
  * schedule_work - put work task in global workqueue
  * @work: job to be done
@@ -217,9 +418,7 @@ struct void btusb_notify(struct hci_dev *hdev, unsigned int evt)
 		schedule_work(&data->work);
 	}
 }
-	
 		
-
 /**
  * usb_set_interface - Makes a particular alternate setting be current
  * @dev: the device whose interface is being updated
