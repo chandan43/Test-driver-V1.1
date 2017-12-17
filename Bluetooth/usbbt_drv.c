@@ -1,4 +1,5 @@
 /* This driver is based on the 2.6.3 version of drivers drivers/bluetooth/btusb.c
+://elixir.free https://elixir.freeinclude <linux/hid.h>
  * but has been rewritten to be easier to read and use
  */
 
@@ -198,6 +199,46 @@ struct btusb_data {
 	int isoc_altsetting;
 	int suspend_count;
 };
+
+static int btusb_close(struct hci_dev *hdev)
+{
+	struct btusb_data *data = hci_get_drvdata(hdev);
+	int err;
+
+	BT_DBG("%s", hdev->name);	
+	if (!test_and_clear_bit(HCI_RUNNING, &hdev->flags))
+		return 0;
+	cancel_work_sync(&data->work);
+	cancel_work_sync(&data->waker);
+	
+	clear_bit(BTUSB_ISOC_RUNNING, &data->flags);
+	clear_bit(BTUSB_BULK_RUNNING, &data->flags);
+	clear_bit(BTUSB_INTR_RUNNING, &data->flags);
+
+	btusb_stop_traffic(data);                   //TODO
+	
+	err = usb_autopm_get_interface(data->intf);
+	if (err < 0)
+		goto failed;
+
+	data->intf->needs_remote_wakeup = 0;
+	usb_autopm_put_interface(data->intf);
+	/*All URBs of an anchor are unanchored en masse.*/
+failed:
+	usb_scuttle_anchored_urbs(&data->deferred);
+	return 0;
+}
+
+static int btusb_flush(struct hci_dev *hdev)
+{
+	struct btusb_data *data = hci_get_drvdata(hdev);
+
+	BT_DBG("%s", hdev->name);
+
+	usb_kill_anchored_urbs(&data->tx_anchor);
+
+	return 0;
+}
 
 /* spin_lock_irqsave is basically used to save the interrupt state 
  * before taking the spin lock, this is because spin lock disables 
