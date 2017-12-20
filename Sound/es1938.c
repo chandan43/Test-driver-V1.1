@@ -42,6 +42,111 @@ MODULE_PARM_DESC(enable, "Enable ESS Solo-1 soundcard.");
 
 #define SLSB_REG(chip, x) ((chip)->sb_port + ESSSB_REG_##x)
 
+/*PCI CONFIGURATION REGISTERS : page no. 20 :DsSolo1.pdf*/
+#define SL_PCI_LEGACYCONTROL		0x40      /*Legacy audio control    */
+#define SL_PCI_CONFIG			0x50      /*Solo-1 configuration    */
+#define SL_PCI_DDMACONTROL		0x60      /*Distributed DMA control */
+
+/*I/O PORTS  :page no. 27 */
+#define ESSIO_REG_AUDIO2DMAADDR		0
+#define ESSIO_REG_AUDIO2DMACOUNT	4
+#define ESSIO_REG_AUDIO2MODE		6
+#define ESSIO_REG_IRQCONTROL		7
+
+/*DMAC Device : page no. 27 */
+#define ESSDM_REG_DMAADDR		0x00
+#define ESSDM_REG_DMACOUNT		0x04
+#define ESSDM_REG_DMACOMMAND		0x08
+#define ESSDM_REG_DMASTATUS		0x08
+#define ESSDM_REG_DMAMODE		0x0b
+#define ESSDM_REG_DMACLEAR		0x0d
+#define ESSDM_REG_DMAMASK		0x0f
+
+/*Audio/FM Device : page no. 27*/
+#define ESSSB_REG_FMLOWADDR		0x00
+#define ESSSB_REG_FMHIGHADDR		0x02
+#define ESSSB_REG_MIXERADDR		0x04
+#define ESSSB_REG_MIXERDATA		0x05
+
+/*ESS Mixer Registers : page no. 50*/
+#define ESSSB_IREG_AUDIO1		0x14
+#define ESSSB_IREG_MICMIX		0x1a
+#define ESSSB_IREG_RECSRC		0x1c
+#define ESSSB_IREG_MASTER		0x32
+#define ESSSB_IREG_FM			0x36
+#define ESSSB_IREG_AUXACD		0x38
+#define ESSSB_IREG_AUXB			0x3a
+#define ESSSB_IREG_PCSPEAKER		0x3c
+#define ESSSB_IREG_LINE			0x3e
+#define ESSSB_IREG_SPATCONTROL		0x50
+#define ESSSB_IREG_SPATLEVEL		0x52
+#define ESSSB_IREG_MASTER_LEFT		0x60
+#define ESSSB_IREG_MASTER_RIGHT		0x62
+#define ESSSB_IREG_MPU401CONTROL	0x64
+#define ESSSB_IREG_MICMIXRECORD		0x68
+#define ESSSB_IREG_AUDIO2RECORD		0x69
+#define ESSSB_IREG_AUXACDRECORD		0x6a
+#define ESSSB_IREG_FMRECORD		0x6b
+#define ESSSB_IREG_AUXBRECORD		0x6c
+#define ESSSB_IREG_MONO			0x6d
+#define ESSSB_IREG_LINERECORD		0x6e
+#define ESSSB_IREG_MONORECORD		0x6f
+#define ESSSB_IREG_AUDIO2SAMPLE		0x70
+#define ESSSB_IREG_AUDIO2MODE		0x71
+#define ESSSB_IREG_AUDIO2FILTER		0x72
+#define ESSSB_IREG_AUDIO2TCOUNTL	0x74
+#define ESSSB_IREG_AUDIO2TCOUNTH	0x76
+#define ESSSB_IREG_AUDIO2CONTROL1	0x78
+#define ESSSB_IREG_AUDIO2CONTROL2	0x7a
+#define ESSSB_IREG_AUDIO2		0x7c
+
+/*Audio/FM Device : page no. 27*/
+#define ESSSB_REG_RESET			0x06
+
+#define ESSSB_REG_READDATA		0x0a
+#define ESSSB_REG_WRITEDATA		0x0c
+#define ESSSB_REG_READSTATUS		0x0c
+
+#define ESSSB_REG_STATUS		0x0e
+
+/*Controller Registers pg:58-64*/
+#define ESS_CMD_EXTSAMPLERATE		0xa1
+#define ESS_CMD_FILTERDIV		0xa2
+#define ESS_CMD_DMACNTRELOADL		0xa4
+#define ESS_CMD_DMACNTRELOADH		0xa5
+#define ESS_CMD_ANALOGCONTROL		0xa8
+#define ESS_CMD_IRQCONTROL		0xb1
+#define ESS_CMD_DRQCONTROL		0xb2
+#define ESS_CMD_RECLEVEL		0xb4
+#define ESS_CMD_SETFORMAT		0xb6
+#define ESS_CMD_SETFORMAT2		0xb7
+#define ESS_CMD_DMACONTROL		0xb8
+#define ESS_CMD_DMATYPE			0xb9
+#define ESS_CMD_OFFSETLEFT		0xba	
+#define ESS_CMD_OFFSETRIGHT		0xbb
+#define ESS_CMD_READREG			0xc0
+#define ESS_CMD_ENABLEEXT		0xc6
+#define ESS_CMD_PAUSEDMA		0xd0
+#define ESS_CMD_ENABLEAUDIO1		0xd1
+#define ESS_CMD_STOPAUDIO1		0xd3
+#define ESS_CMD_AUDIO1STATUS		0xd8
+#define ESS_CMD_CONTDMA			0xd4
+#define ESS_CMD_TESTIRQ			0xf2
+
+/*Extended Access to ADC Source Select Pg :46*/
+#define ESS_RECSRC_MIC		0
+#define ESS_RECSRC_AUXACD	2
+#define ESS_RECSRC_AUXB		5
+#define ESS_RECSRC_LINE		6
+#define ESS_RECSRC_NONE		7
+
+/*pg :40-44 */
+#define DAC1 0x01
+#define ADC1 0x02
+#define DAC2 0x04
+
+
+#define SAVED_REG_SIZE	32 /* max. number of registers to save */
 
 struct es1938 {
 	int irq;
@@ -89,6 +194,11 @@ struct es1938 {
 	unsigned char saved_regs[SAVED_REG_SIZE];
 #endif
 };
+
+#define RESET_LOOP_TIMEOUT	0x10000
+#define WRITE_LOOP_TIMEOUT	0x10000
+#define GET_LOOP_TIMEOUT	0x01000
+
 /* Does your device have any DMA addressing limitations?  For example, is
    your device only capable of driving the low order 24-bits of address?
   If so, you need to inform the kernel of this fact.
@@ -197,6 +307,18 @@ static int snd_es1938_create(struct snd_card *card,
  * Return: %IRQ_HANDLED if the interrupt was handled. %IRQ_NONE otherwise.
  */
 
+/**
+ * snd_pcm_period_elapsed - update the pcm status for the next period
+ * @substream: the pcm substream instance
+ *
+ * This function is called from the interrupt handler when the
+ * PCM has processed the period size.  It will update the current
+ * pointer, wake up sleepers, etc.
+ *
+ * Even if more than one periods have elapsed since the last call, you
+ * have to call this only once.
+ */
+
 /* --------------------------------------------------------------------
  * Interrupt handler
  * -------------------------------------------------------------------- */
@@ -256,7 +378,7 @@ static irqreturn_t snd_es1938_interrupt(int irq, void *dev_id)
 	/* Hardware volume */
 	if (status & 0x40) {
 		/* Master volume control : Checking Split mode*/
-		int split = snd_es1938_mixer_read(chip, 0x64) & 0x80; 
+		int split = snd_es1938_mixer_read(chip, 0x64) & 0x80;    //TODO 
 		handled = 1;
 		snd_ctl_notify(chip->card, SNDRV_CTL_EVENT_MASK_VALUE, &chip->hw_switch->id);
 		snd_ctl_notify(chip->card, SNDRV_CTL_EVENT_MASK_VALUE, &chip->hw_volume->id);
@@ -267,7 +389,7 @@ static irqreturn_t snd_es1938_interrupt(int irq, void *dev_id)
 				       &chip->master_volume->id);
 		}
 		/* ack interrupt */
-		snd_es1938_mixer_write(chip, 0x66, 0x00);
+		snd_es1938_mixer_write(chip, 0x66, 0x00);  //TODO
 	}
 
 	/* MPU401 */
