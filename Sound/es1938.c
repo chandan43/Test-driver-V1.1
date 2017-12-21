@@ -201,7 +201,158 @@ struct es1938 {
 
 
 
+#define ES1938_SINGLE_TLV(xname, xindex, reg, shift, mask, invert, xtlv)    \
+{ .iface = SNDRV_CTL_ELEM_IFACE_MIXER, \
+  .access = SNDRV_CTL_ELEM_ACCESS_READWRITE | SNDRV_CTL_ELEM_ACCESS_TLV_READ,\
+  .name = xname, .index = xindex, \
+  .info = snd_es1938_info_single, \
+  .get = snd_es1938_get_single, .put = snd_es1938_put_single, \
+  .private_value = reg | (shift << 8) | (mask << 16) | (invert << 24), \
+  .tlv = { .p = xtlv } }
+#define ES1938_SINGLE(xname, xindex, reg, shift, mask, invert) \
+{ .iface = SNDRV_CTL_ELEM_IFACE_MIXER, .name = xname, .index = xindex, \
+  .info = snd_es1938_info_single, \
+  .get = snd_es1938_get_single, .put = snd_es1938_put_single, \
+  .private_value = reg | (shift << 8) | (mask << 16) | (invert << 24) }
 
+#define ES1938_DOUBLE_TLV(xname, xindex, left_reg, right_reg, shift_left, shift_right, mask, invert, xtlv) \
+{ .iface = SNDRV_CTL_ELEM_IFACE_MIXER, \
+  .access = SNDRV_CTL_ELEM_ACCESS_READWRITE | SNDRV_CTL_ELEM_ACCESS_TLV_READ,\
+  .name = xname, .index = xindex, \
+  .info = snd_es1938_info_double, \
+  .get = snd_es1938_get_double, .put = snd_es1938_put_double, \
+  .private_value = left_reg | (right_reg << 8) | (shift_left << 16) | (shift_right << 19) | (mask << 24) | (invert << 22), \
+  .tlv = { .p = xtlv } }
+#define ES1938_DOUBLE(xname, xindex, left_reg, right_reg, shift_left, shift_right, mask, invert) \
+{ .iface = SNDRV_CTL_ELEM_IFACE_MIXER, .name = xname, .index = xindex, \
+  .info = snd_es1938_info_double, \
+  .get = snd_es1938_get_double, .put = snd_es1938_put_double, \
+  .private_value = left_reg | (right_reg << 8) | (shift_left << 16) | (shift_right << 19) | (mask << 24) | (invert << 22) }
+
+/*The tlv field can be used to provide metadata about the control*/
+/*
+  To create a new control, you need to define the following three callbacks: info, get and put. Then, define a struct snd_kcontrol_new record, such as:
+
+  static struct snd_kcontrol_new my_control = {
+         .iface = SNDRV_CTL_ELEM_IFACE_MIXER,
+         .name = "PCM Playback Switch",
+         .index = 0,
+         .access = SNDRV_CTL_ELEM_ACCESS_READWRITE,
+         .private_value = 0xffff,
+         .info = my_control_info,
+         .get = my_control_get,
+         .put = my_control_put
+ };
+
+*/
+
+static int snd_es1938_put_double(struct snd_kcontrol *kcontrol,
+				 struct snd_ctl_elem_value *ucontrol)
+{
+
+}
+static const DECLARE_TLV_DB_RANGE(db_scale_master,
+	0, 54, TLV_DB_SCALE_ITEM(-3600, 50, 1),
+	54, 63, TLV_DB_SCALE_ITEM(-900, 100, 0),
+);
+
+static const DECLARE_TLV_DB_RANGE(db_scale_audio1,
+	0, 8, TLV_DB_SCALE_ITEM(-3300, 300, 1),
+	8, 15, TLV_DB_SCALE_ITEM(-900, 150, 0),
+);
+
+static const DECLARE_TLV_DB_RANGE(db_scale_audio2,
+	0, 8, TLV_DB_SCALE_ITEM(-3450, 300, 1),
+	8, 15, TLV_DB_SCALE_ITEM(-1050, 150, 0),
+);
+
+static const DECLARE_TLV_DB_RANGE(db_scale_mic,
+	0, 8, TLV_DB_SCALE_ITEM(-2400, 300, 1),
+	8, 15, TLV_DB_SCALE_ITEM(0, 150, 0),
+);
+
+static const DECLARE_TLV_DB_RANGE(db_scale_line,
+	0, 8, TLV_DB_SCALE_ITEM(-3150, 300, 1),
+	8, 15, TLV_DB_SCALE_ITEM(-750, 150, 0),
+);
+
+static const DECLARE_TLV_DB_SCALE(db_scale_capture, 0, 150, 0);
+
+
+static struct snd_kcontrol_new snd_es1938_controls[] = {
+ES1938_DOUBLE_TLV("Master Playback Volume", 0, 0x60, 0x62, 0, 0, 63, 0,
+		  db_scale_master),
+ES1938_DOUBLE("Master Playback Switch", 0, 0x60, 0x62, 6, 6, 1, 1),
+{
+	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
+	.name = "Hardware Master Playback Volume",
+	.access = SNDRV_CTL_ELEM_ACCESS_READ,
+	.info = snd_es1938_info_hw_volume,
+	.get = snd_es1938_get_hw_volume,
+},
+{
+	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
+	.access = (SNDRV_CTL_ELEM_ACCESS_READ |
+		   SNDRV_CTL_ELEM_ACCESS_TLV_READ),
+	.name = "Hardware Master Playback Switch",
+	.info = snd_es1938_info_hw_switch,
+	.get = snd_es1938_get_hw_switch,
+	.tlv = { .p = db_scale_master },
+},
+ES1938_SINGLE("Hardware Volume Split", 0, 0x64, 7, 1, 0),
+ES1938_DOUBLE_TLV("Line Playback Volume", 0, 0x3e, 0x3e, 4, 0, 15, 0,
+		  db_scale_line),
+ES1938_DOUBLE("CD Playback Volume", 0, 0x38, 0x38, 4, 0, 15, 0),
+ES1938_DOUBLE_TLV("FM Playback Volume", 0, 0x36, 0x36, 4, 0, 15, 0,
+		  db_scale_mic),
+ES1938_DOUBLE_TLV("Mono Playback Volume", 0, 0x6d, 0x6d, 4, 0, 15, 0,
+		  db_scale_line),
+ES1938_DOUBLE_TLV("Mic Playback Volume", 0, 0x1a, 0x1a, 4, 0, 15, 0,
+		  db_scale_mic),
+ES1938_DOUBLE_TLV("Aux Playback Volume", 0, 0x3a, 0x3a, 4, 0, 15, 0,
+		  db_scale_line),
+ES1938_DOUBLE_TLV("Capture Volume", 0, 0xb4, 0xb4, 4, 0, 15, 0,
+		  db_scale_capture),
+ES1938_SINGLE("Beep Volume", 0, 0x3c, 0, 7, 0),
+ES1938_SINGLE("Record Monitor", 0, 0xa8, 3, 1, 0),
+ES1938_SINGLE("Capture Switch", 0, 0x1c, 4, 1, 1),
+{
+	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
+	.name = "Capture Source",
+	.info = snd_es1938_info_mux,
+	.get = snd_es1938_get_mux,
+	.put = snd_es1938_put_mux,
+},
+ES1938_DOUBLE_TLV("Mono Input Playback Volume", 0, 0x6d, 0x6d, 4, 0, 15, 0,
+		  db_scale_line),
+ES1938_DOUBLE_TLV("PCM Capture Volume", 0, 0x69, 0x69, 4, 0, 15, 0,
+		  db_scale_audio2),
+ES1938_DOUBLE_TLV("Mic Capture Volume", 0, 0x68, 0x68, 4, 0, 15, 0,
+		  db_scale_mic),
+ES1938_DOUBLE_TLV("Line Capture Volume", 0, 0x6e, 0x6e, 4, 0, 15, 0,
+		  db_scale_line),
+ES1938_DOUBLE_TLV("FM Capture Volume", 0, 0x6b, 0x6b, 4, 0, 15, 0,
+		  db_scale_mic),
+ES1938_DOUBLE_TLV("Mono Capture Volume", 0, 0x6f, 0x6f, 4, 0, 15, 0,
+		  db_scale_line),
+ES1938_DOUBLE_TLV("CD Capture Volume", 0, 0x6a, 0x6a, 4, 0, 15, 0,
+		  db_scale_line),
+ES1938_DOUBLE_TLV("Aux Capture Volume", 0, 0x6c, 0x6c, 4, 0, 15, 0,
+		  db_scale_line),
+ES1938_DOUBLE_TLV("PCM Playback Volume", 0, 0x7c, 0x7c, 4, 0, 15, 0,
+		  db_scale_audio2),
+ES1938_DOUBLE_TLV("PCM Playback Volume", 1, 0x14, 0x14, 4, 0, 15, 0,
+		  db_scale_audio1),
+ES1938_SINGLE("3D Control - Level", 0, 0x52, 0, 63, 0),
+{
+	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
+	.name = "3D Control - Switch",
+	.info = snd_es1938_info_spatializer_enable,
+	.get = snd_es1938_get_spatializer_enable,
+	.put = snd_es1938_put_spatializer_enable,
+},
+ES1938_SINGLE("Mic Boost (+26dB)", 0, 0x7d, 3, 1, 0)
+};
 /* ---------------------------------------------------------------------------- */
 /* ---------------------------------------------------------------------------- */
 
