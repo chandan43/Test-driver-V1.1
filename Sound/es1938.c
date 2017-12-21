@@ -199,6 +199,181 @@ struct es1938 {
 #define WRITE_LOOP_TIMEOUT	0x10000
 #define GET_LOOP_TIMEOUT	0x01000
 
+
+
+
+/* ---------------------------------------------------------------------------- */
+/* ---------------------------------------------------------------------------- */
+
+/*
+ * initialize the chip - used by resume callback, too
+ */
+static void snd_es1938_chip_init(struct es1938 *chip)
+{
+	/* reset chip */
+	snd_es1938_reset(chip);
+
+	/* configure native mode */
+
+	/* enable bus master */
+	pci_set_master(chip->pci);
+
+	/* disable legacy audio */
+	pci_write_config_word(chip->pci, SL_PCI_LEGACYCONTROL, 0x805f);   //page 24 : Legacy Audio Control : 805f 
+
+	/* set DDMA base */
+	pci_write_config_word(chip->pci, SL_PCI_DDMACONTROL, chip->ddma_port | 1); //page 25
+
+	/* set DMA/IRQ policy */
+	pci_write_config_dword(chip->pci, SL_PCI_CONFIG, 0); 
+
+	/* enable Audio 1, Audio 2, MPU401 IRQ and HW volume IRQ*/
+	outb(0xf0, SLIO_REG(chip, IRQCONTROL));  //page 25
+
+	/* reset DMA */
+	outb(0, SLDM_REG(chip, DMACLEAR));
+}
+
+#ifdef CONFIG_PM_SLEEP
+/*
+ * PM support
+ */
+/*page : 50*/
+static unsigned char saved_regs[SAVED_REG_SIZE+1] = {
+	0x14, 0x1a, 0x1c, 0x3a, 0x3c, 0x3e, 0x36, 0x38,
+	0x50, 0x52, 0x60, 0x61, 0x62, 0x63, 0x64, 0x68,
+	0x69, 0x6a, 0x6b, 0x6d, 0x6e, 0x6f, 0x7c, 0x7d,
+	0xa8, 0xb4,
+};
+
+/**
+ * snd_pcm_suspend_all - trigger SUSPEND to all substreams in the given pcm
+ * @pcm: the PCM instance
+ *
+ * After this call, all streams are changed to SUSPENDED state.
+ *
+ * Return: Zero if successful (or @pcm is %NULL), or a negative error code.
+ */
+static int es1938_suspend(struct device *dev)
+{
+	struct snd_card *card = dev_get_drvdata(dev);
+	struct es1938 *chip = card->private_data;
+	unsigned char *s, *d;
+	/*Change power state to suspend*/
+	snd_power_change_state(card, SNDRV_CTL_POWER_D3hot); /* Off, with power */
+	snd_pcm_suspend_all(chip->pcm);
+	
+	/* save mixer-related registers */
+	for (s = saved_regs, d = chip->saved_regs; *s; s++, d++)
+		*d = snd_es1938_reg_read(chip, *s);  //TODO
+	
+	outb(0x00, SLIO_REG(chip, IRQCONTROL)); /* disable irqs */
+	if (chip->irq >= 0) {
+		free_irq(chip->irq, chip);
+		chip->irq = -1;
+	}
+	return 0; 
+}	
+
+static int es1938_resume(struct device *dev)
+{
+	struct pci_dev *pci = to_pci_dev(dev);
+	struct snd_card *card = dev_get_drvdata(dev);
+	struct es1938 *chip = card->private_data;
+	unsigned char *s, *d;
+
+	
+	if (request_irq(pci->irq, snd_es1938_interrupt,
+			IRQF_SHARED, KBUILD_MODNAME, chip)) {
+		dev_err(dev, "unable to grab IRQ %d, disabling device\n",
+			pci->irq);
+		snd_card_disconnect(card);
+		return -EIO;
+	}
+	chip->irq = pci->irq;
+	snd_es1938_chip_init(chip);  //TODO
+
+	/* restore mixer-related registers */
+	for (s = saved_regs, d = chip->saved_regs; *s; s++, d++) {
+		if (*s < 0xa0)
+			snd_es1938_mixer_write(chip, *s, *d);
+		else
+			snd_es1938_write(chip, *s, *d);
+	}
+
+	snd_power_change_state(card, SNDRV_CTL_POWER_D0); /* full On */
+	
+	return 0;
+}
+/*
+ * Use this if you want to use the same suspend and resume callbacks for suspend
+ * to RAM and hibernation.
+ */
+static SIMPLE_DEV_PM_OPS(es1938_pm, es1938_suspend, es1938_resume);
+
+#define ES1938_PM_OPS	&es1938_pm
+#else
+#define ES1938_PM_OPS	NULL
+#endif /* CONFIG_PM_SLEEP */
+
+
+#ifdef SUPPORT_JOYSTICK
+
+static int snd_es1938_create_gameport(struct es1938 *chip)
+{
+	struct gameport *gp;
+
+	chip->gameport = gp = gameport_allocate_port();
+	if (!gp) {
+		dev_err(chip->card->dev,
+			"cannot allocate memory for gameport\n");
+		return -ENOMEM;
+	}
+	gameport_set_name(gp, "ES1938");
+	gameport_set_phys(gp, "pci%s/gameport0", pci_name(chip->pci));
+	gameport_set_dev_parent(gp, &chip->pci->dev);
+	gp->io = chip->game_port;
+
+	gameport_register_port(gp);
+
+	return 0;	
+}
+static void snd_es1938_free_gameport(struct es1938 *chip)
+{
+	if (chip->gameport) {
+		gameport_unregister_port(chip->gameport);
+		chip->gameport = NULL;
+	}
+}
+#else
+static inline int snd_es1938_create_gameport(struct es1938 *chip) { return -ENOSYS; }
+static inline void snd_es1938_free_gameport(struct es1938 *chip) { }
+#endif /* SUPPORT_JOYSTICK */
+
+static int snd_es1938_free(struct es1938 *chip)
+{
+	/* disable irqs */
+	outb(0x00, SLIO_REG(chip, IRQCONTROL));
+	if (chip->rmidi)
+		snd_es1938_mixer_bits(chip, ESSSB_IREG_MPU401CONTROL, 0x40, 0);  //TODO :
+	
+	snd_es1938_free_gameport(chip);
+
+	if (chip->irq >= 0)
+		free_irq(chip->irq, chip);
+
+	pci_release_regions(chip->pci);
+	pci_disable_device(chip->pci);
+	kfree(chip);
+	return 0;	
+
+}
+static int snd_es1938_dev_free(struct snd_device *device)
+{
+		struct es1938 *chip = device->device_data;
+			return snd_es1938_free(chip);
+}
+
 /* Does your device have any DMA addressing limitations?  For example, is
    your device only capable of driving the low order 24-bits of address?
   If so, you need to inform the kernel of this fact.
