@@ -209,6 +209,7 @@ struct es1938 {
   .get = snd_es1938_get_single, .put = snd_es1938_put_single, \
   .private_value = reg | (shift << 8) | (mask << 16) | (invert << 24), \
   .tlv = { .p = xtlv } }
+
 #define ES1938_SINGLE(xname, xindex, reg, shift, mask, invert) \
 { .iface = SNDRV_CTL_ELEM_IFACE_MIXER, .name = xname, .index = xindex, \
   .info = snd_es1938_info_single, \
@@ -223,6 +224,7 @@ struct es1938 {
   .get = snd_es1938_get_double, .put = snd_es1938_put_double, \
   .private_value = left_reg | (right_reg << 8) | (shift_left << 16) | (shift_right << 19) | (mask << 24) | (invert << 22), \
   .tlv = { .p = xtlv } }
+
 #define ES1938_DOUBLE(xname, xindex, left_reg, right_reg, shift_left, shift_right, mask, invert) \
 { .iface = SNDRV_CTL_ELEM_IFACE_MIXER, .name = xname, .index = xindex, \
   .info = snd_es1938_info_double, \
@@ -249,7 +251,64 @@ struct es1938 {
 static int snd_es1938_put_double(struct snd_kcontrol *kcontrol,
 				 struct snd_ctl_elem_value *ucontrol)
 {
+	struct es1938 *chip = snd_kcontrol_chip(kcontrol);
+	int right_reg = (kcontrol->private_value >> 8) & 0xff;
+	int shift_left = (kcontrol->private_value >> 16) & 0x07;
+	int shift_right = (kcontrol->private_value >> 19) & 0x07;
+	int mask = (kcontrol->private_value >> 24) & 0xff;
+	int invert = (kcontrol->private_value >> 22) & 1;
+	unsigned char left, right;
 
+	left = snd_es1938_reg_read(chip, left_reg);
+	if (left_reg != right_reg)
+		right = snd_es1938_reg_read(chip, right_reg);
+	else
+		right = left;	
+	ucontrol->value.integer.value[0] = (left >> shift_left) & mask;
+	ucontrol->value.integer.value[1] = (right >> shift_right) & mask;
+	if (invert) {
+		ucontrol->value.integer.value[0] = mask - ucontrol->value.integer.value[0];
+		ucontrol->value.integer.value[1] = mask - ucontrol->value.integer.value[1];
+	}
+	return 0;	
+}
+
+static int snd_es1938_put_double(struct snd_kcontrol *kcontrol,
+				 struct snd_ctl_elem_value *ucontrol)
+{
+	struct es1938 *chip = snd_kcontrol_chip(kcontrol);
+	int left_reg = kcontrol->private_value & 0xff;
+	int right_reg = (kcontrol->private_value >> 8) & 0xff;
+	int shift_left = (kcontrol->private_value >> 16) & 0x07;
+	int shift_right = (kcontrol->private_value >> 19) & 0x07;
+	int mask = (kcontrol->private_value >> 24) & 0xff;
+	int invert = (kcontrol->private_value >> 22) & 1;
+	int change;
+	unsigned char val1, val2, mask1, mask2;
+	
+	val1 = ucontrol->value.integer.value[0] & mask;
+	val2 = ucontrol->value.integer.value[1] & mask;
+	if (invert) {
+		val1 = mask - val1;
+		val2 = mask - val2;
+	}
+	val1 <<= shift_left;
+	val2 <<= shift_right;
+	mask1 = mask << shift_left;
+	mask2 = mask << shift_right;
+	
+	if (left_reg != right_reg) {
+		change = 0;
+		if (snd_es1938_reg_bits(chip, left_reg, mask1, val1) != val1)
+			change = 1;
+		if (snd_es1938_reg_bits(chip, right_reg, mask2, val2) != val2)
+			change = 1;
+	} else {
+		change = (snd_es1938_reg_bits(chip, left_reg, mask1 | mask2, 
+					      val1 | val2) != (val1 | val2));
+	}
+	return change;
+}
 }
 static const DECLARE_TLV_DB_RANGE(db_scale_master,
 	0, 54, TLV_DB_SCALE_ITEM(-3600, 50, 1),
@@ -704,9 +763,9 @@ static irqreturn_t snd_es1938_interrupt(int irq, void *dev_id)
 	/* Hardware volume */
 	if (status & 0x40) {
 		/* Master volume control : Checking Split mode*/
-		int split = snd_es1938_mixer_read(chip, 0x64) & 0x80;    //TODO 
+		int split = snd_es1938_mixer_read(chip, 0x64) & 0x80;    // Master volume control : page : 50 | 8 bit  
 		handled = 1;
-		snd_ctl_notify(chip->card, SNDRV_CTL_EVENT_MASK_VALUE, &chip->hw_switch->id);
+		snd_ctl_notify(chip->card, SNDRV_CTL_EVENT_MASK_VALUE, &chip->hw_switch->id); //
 		snd_ctl_notify(chip->card, SNDRV_CTL_EVENT_MASK_VALUE, &chip->hw_volume->id);
 		if (!split) {
 			snd_ctl_notify(chip->card, SNDRV_CTL_EVENT_MASK_VALUE,
@@ -715,7 +774,7 @@ static irqreturn_t snd_es1938_interrupt(int irq, void *dev_id)
 				       &chip->master_volume->id);
 		}
 		/* ack interrupt */
-		snd_es1938_mixer_write(chip, 0x66, 0x00);  //TODO
+		snd_es1938_mixer_write(chip, 0x66, 0x00);  //Clear hardware volume interrupt request
 	}
 
 	/* MPU401 */
