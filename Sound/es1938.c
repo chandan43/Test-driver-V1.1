@@ -199,7 +199,135 @@ struct es1938 {
 #define WRITE_LOOP_TIMEOUT	0x10000
 #define GET_LOOP_TIMEOUT	0x01000
 
+/**
+ * snd_ctl_enum_info - fills the info structure for an enumerated control
+ * @info: the structure to be filled
+ * @channels: the number of the control's channels; often one
+ * @items: the number of control values; also the size of @names
+ * @names: an array containing the names of all control values
+ *
+ * Sets all required fields in @info to their appropriate values.
+ * If the control's accessibility is not the default (readable and writable),
+ * the caller has to fill @info->access.
+ *
+ * Return: Zero.
+ */
+/* -------------------------------------------------------------------
+ * 
+ *                       *** Mixer part ***
+ */
 
+static int snd_es1938_info_mux(struct snd_kcontrol *kcontrol,
+			       struct snd_ctl_elem_info *uinfo)
+{
+	static const char * const texts[8] = {
+		"Mic", "Mic Master", "CD", "AOUT",
+		"Mic1", "Mix", "Line", "Master"
+	};
+
+	return snd_ctl_enum_info(uinfo, 1, 8, texts);
+}
+
+static int snd_es1938_get_mux(struct snd_kcontrol *kcontrol,
+			      struct snd_ctl_elem_value *ucontrol)
+{
+	struct es1938 *chip = snd_kcontrol_chip(kcontrol);
+	ucontrol->value.enumerated.item[0] = snd_es1938_mixer_read(chip, 0x1c) & 0x07;
+	return 0;
+}
+
+
+static int snd_es1938_put_mux(struct snd_kcontrol *kcontrol,
+			      struct snd_ctl_elem_value *ucontrol)
+{
+	struct es1938 *chip = snd_kcontrol_chip(kcontrol);
+	unsigned char val = ucontrol->value.enumerated.item[0];
+	
+	if (val > 7)
+		return -EINVAL;
+	return snd_es1938_mixer_bits(chip, 0x1c, 0x07, val) != val;
+}
+
+#define snd_es1938_info_spatializer_enable	snd_ctl_boolean_mono_info
+
+static int snd_es1938_get_spatializer_enable(struct snd_kcontrol *kcontrol,
+					     struct snd_ctl_elem_value *ucontrol)
+{
+	struct es1938 *chip = snd_kcontrol_chip(kcontrol);
+	unsigned char val = snd_es1938_mixer_read(chip, 0x50);
+	ucontrol->value.integer.value[0] = !!(val & 8);
+	return 0;
+}
+
+static int snd_es1938_put_spatializer_enable(struct snd_kcontrol *kcontrol,
+					     struct snd_ctl_elem_value *ucontrol)
+{
+	struct es1938 *chip = snd_kcontrol_chip(kcontrol);
+	unsigned char oval, nval;
+	int change;
+	nval = ucontrol->value.integer.value[0] ? 0x0c : 0x04;
+	oval = snd_es1938_mixer_read(chip, 0x50) & 0x0c;
+	change = nval != oval;
+	if (change) {
+		snd_es1938_mixer_write(chip, 0x50, nval & ~0x04);
+		snd_es1938_mixer_write(chip, 0x50, nval);
+	}
+	return change;
+}
+static int snd_es1938_info_hw_volume(struct snd_kcontrol *kcontrol,
+				     struct snd_ctl_elem_info *uinfo)
+{
+	uinfo->type = SNDRV_CTL_ELEM_TYPE_INTEGER;
+	uinfo->count = 2;
+	uinfo->value.integer.min = 0;
+	uinfo->value.integer.max = 63;
+	return 0;
+}
+
+static int snd_es1938_get_hw_volume(struct snd_kcontrol *kcontrol,
+				    struct snd_ctl_elem_value *ucontrol)
+{
+	struct es1938 *chip = snd_kcontrol_chip(kcontrol);
+	ucontrol->value.integer.value[0] = snd_es1938_mixer_read(chip, 0x61) & 0x3f; //pg  50
+	ucontrol->value.integer.value[1] = snd_es1938_mixer_read(chip, 0x63) & 0x3f;
+	return 0;
+}
+
+#define snd_es1938_info_hw_switch		snd_ctl_boolean_stereo_info
+
+static int snd_es1938_get_hw_switch(struct snd_kcontrol *kcontrol,
+				    struct snd_ctl_elem_value *ucontrol)
+{
+	struct es1938 *chip = snd_kcontrol_chip(kcontrol);
+	ucontrol->value.integer.value[0] = !(snd_es1938_mixer_read(chip, 0x61) & 0x40);
+	ucontrol->value.integer.value[1] = !(snd_es1938_mixer_read(chip, 0x63) & 0x40);
+	return 0;
+}
+
+static void snd_es1938_hwv_free(struct snd_kcontrol *kcontrol)
+{
+	struct es1938 *chip = snd_kcontrol_chip(kcontrol);
+	chip->master_volume = NULL;
+	chip->master_switch = NULL;
+	chip->hw_volume = NULL;
+	chip->hw_switch = NULL;
+}
+static int snd_es1938_reg_bits(struct es1938 *chip, unsigned char reg,
+			       unsigned char mask, unsigned char val)
+{
+	if (reg < 0xa0)
+		return snd_es1938_mixer_bits(chip, reg, mask, val);
+	else
+		return snd_es1938_bits(chip, reg, mask, val);
+}
+
+static int snd_es1938_reg_read(struct es1938 *chip, unsigned char reg)
+{
+	if (reg < 0xa0)
+		return snd_es1938_mixer_read(chip, reg);
+	else
+		return snd_es1938_read(chip, reg);
+}
 
 #define ES1938_SINGLE_TLV(xname, xindex, reg, shift, mask, invert, xtlv)    \
 { .iface = SNDRV_CTL_ELEM_IFACE_MIXER, \
@@ -216,6 +344,52 @@ struct es1938 {
   .get = snd_es1938_get_single, .put = snd_es1938_put_single, \
   .private_value = reg | (shift << 8) | (mask << 16) | (invert << 24) }
 
+
+static int snd_es1938_info_single(struct snd_kcontrol *kcontrol,
+				  struct snd_ctl_elem_info *uinfo)
+{
+	int mask = (kcontrol->private_value >> 16) & 0xff;
+
+	uinfo->type = mask == 1 ? SNDRV_CTL_ELEM_TYPE_BOOLEAN : SNDRV_CTL_ELEM_TYPE_INTEGER;
+	uinfo->count = 1;
+	uinfo->value.integer.min = 0;
+	uinfo->value.integer.max = mask;
+	return 0;
+}
+
+static int snd_es1938_get_single(struct snd_kcontrol *kcontrol,
+				 struct snd_ctl_elem_value *ucontrol)
+{
+	struct es1938 *chip = snd_kcontrol_chip(kcontrol);
+	int reg = kcontrol->private_value & 0xff;
+	int shift = (kcontrol->private_value >> 8) & 0xff;
+	int mask = (kcontrol->private_value >> 16) & 0xff;
+	int invert = (kcontrol->private_value >> 24) & 0xff;
+	int val;
+	
+	val = snd_es1938_reg_read(chip, reg);
+	ucontrol->value.integer.value[0] = (val >> shift) & mask;
+	if (invert)
+		ucontrol->value.integer.value[0] = mask - ucontrol->value.integer.value[0];
+	return 0;
+}
+static int snd_es1938_put_single(struct snd_kcontrol *kcontrol,
+				 struct snd_ctl_elem_value *ucontrol)
+{
+	struct es1938 *chip = snd_kcontrol_chip(kcontrol);
+	int reg = kcontrol->private_value & 0xff;
+	int shift = (kcontrol->private_value >> 8) & 0xff;
+	int mask = (kcontrol->private_value >> 16) & 0xff;
+	int invert = (kcontrol->private_value >> 24) & 0xff;
+	unsigned char val;
+	
+	val = (ucontrol->value.integer.value[0] & mask);
+	if (invert)
+		val = mask - val;
+	mask <<= shift;
+	val <<= shift;
+	return snd_es1938_reg_bits(chip, reg, mask, val) != val;
+}
 #define ES1938_DOUBLE_TLV(xname, xindex, left_reg, right_reg, shift_left, shift_right, mask, invert, xtlv) \
 { .iface = SNDRV_CTL_ELEM_IFACE_MIXER, \
   .access = SNDRV_CTL_ELEM_ACCESS_READWRITE | SNDRV_CTL_ELEM_ACCESS_TLV_READ,\
@@ -247,6 +421,17 @@ struct es1938 {
  };
 
 */
+static int snd_es1938_info_double(struct snd_kcontrol *kcontrol,
+				  struct snd_ctl_elem_info *uinfo)
+{
+	int mask = (kcontrol->private_value >> 24) & 0xff;
+
+	uinfo->type = mask == 1 ? SNDRV_CTL_ELEM_TYPE_BOOLEAN : SNDRV_CTL_ELEM_TYPE_INTEGER;
+	uinfo->count = 2;
+	uinfo->value.integer.min = 0;
+	uinfo->value.integer.max = mask;
+	return 0;
+}
 
 static int snd_es1938_put_double(struct snd_kcontrol *kcontrol,
 				 struct snd_ctl_elem_value *ucontrol)
