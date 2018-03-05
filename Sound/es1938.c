@@ -199,6 +199,198 @@ struct es1938 {
 #define WRITE_LOOP_TIMEOUT	0x10000
 #define GET_LOOP_TIMEOUT	0x01000
 
+/* -----------------------------------------------------------------------
+ * Audio2 Playback (DAC)
+ * -----------------------------------------------------------------------*/
+static struct snd_pcm_hardware snd_es1938_playback =
+{
+	.info =			(SNDRV_PCM_INFO_MMAP | SNDRV_PCM_INFO_INTERLEAVED |
+				 SNDRV_PCM_INFO_BLOCK_TRANSFER |
+				 SNDRV_PCM_INFO_MMAP_VALID),
+	.formats =		(SNDRV_PCM_FMTBIT_U8 | SNDRV_PCM_FMTBIT_S16_LE |
+				 SNDRV_PCM_FMTBIT_S8 | SNDRV_PCM_FMTBIT_U16_LE),
+	.rates =		SNDRV_PCM_RATE_CONTINUOUS | SNDRV_PCM_RATE_8000_48000,
+	.rate_min =		6000,
+	.rate_max =		48000,
+	.channels_min =		1,
+	.channels_max =		2,
+        .buffer_bytes_max =	0x8000,       /* DMA controller screws on higher values */
+	.period_bytes_min =	64,
+	.period_bytes_max =	0x8000,
+	.periods_min =		1,
+	.periods_max =		1024,
+	.fifo_size =		256,
+};
+
+
+static int snd_es1938_capture_open(struct snd_pcm_substream *substream)
+{
+	struct es1938 *chip = snd_pcm_substream_chip(substream);
+	struct snd_pcm_runtime *runtime = substream->runtime;
+
+	if (chip->playback2_substream)
+		return -EAGAIN;
+	chip->capture_substream = substream;
+	runtime->hw = snd_es1938_capture;
+	snd_pcm_hw_constraint_ratnums(runtime, 0, SNDRV_PCM_HW_PARAM_RATE,
+				      &hw_constraints_clocks);
+	snd_pcm_hw_constraint_minmax(runtime, SNDRV_PCM_HW_PARAM_BUFFER_BYTES, 0, 0xff00);
+	return 0;
+}
+
+/**
+ * snd_pcm_hw_constraint_ratnums - apply ratnums constraint to a parameter
+ * @runtime: PCM runtime instance
+ * @cond: condition bits
+ * @var: hw_params variable to apply the ratnums constraint
+ * @r: struct snd_ratnums constriants
+ *
+ * Return: Zero if successful, or a negative error code on failure.
+ */
+/**
+ * snd_pcm_hw_constraint_minmax - apply a min/max range constraint to an interval
+ * @runtime: PCM runtime instance
+ * @var: hw_params variable to apply the range
+ * @min: the minimal value
+ * @max: the maximal value
+ * 
+ * Apply the min/max range constraint to an interval parameter.
+ *
+ * Return: Positive if the value is changed, zero if it's not changed, or a
+ * negative error code.
+ */
+static int snd_es1938_playback_open(struct snd_pcm_substream *substream)
+{
+	struct es1938 *chip = snd_pcm_substream_chip(substream);
+	struct snd_pcm_runtime *runtime = substream->runtime;
+
+	switch (substream->number) {
+	case 0:
+		chip->playback1_substream = substream;
+		break;
+	case 1:
+		if (chip->capture_substream)
+			return -EAGAIN;
+		chip->playback2_substream = substream;
+		break;
+	default:
+		snd_BUG();
+		return -EINVAL;
+	}
+	runtime->hw = snd_es1938_playback;
+	snd_pcm_hw_constraint_ratnums(runtime, 0, SNDRV_PCM_HW_PARAM_RATE,
+				      &hw_constraints_clocks);
+	snd_pcm_hw_constraint_minmax(runtime, SNDRV_PCM_HW_PARAM_BUFFER_BYTES, 0, 0xff00);
+	return 0;
+}
+
+static int snd_es1938_capture_close(struct snd_pcm_substream *substream)
+{
+	struct es1938 *chip = snd_pcm_substream_chip(substream);
+
+	chip->capture_substream = NULL;
+	return 0;
+}
+
+static int snd_es1938_playback_close(struct snd_pcm_substream *substream)
+{
+	struct es1938 *chip = snd_pcm_substream_chip(substream);
+
+	switch (substream->number) {
+	case 0:
+		chip->playback1_substream = NULL;
+		break;
+	case 1:
+		chip->playback2_substream = NULL;
+		break;
+	default:
+		snd_BUG();
+		return -EINVAL;
+	}
+	return 0;
+}
+
+static struct snd_pcm_ops snd_es1938_playback_ops = {
+	.open =		snd_es1938_playback_open,
+	.close =	snd_es1938_playback_close,
+	.ioctl =	snd_pcm_lib_ioctl,
+	.hw_params =	snd_es1938_pcm_hw_params,
+	.hw_free =	snd_es1938_pcm_hw_free,
+	.prepare =	snd_es1938_playback_prepare,
+	.trigger =	snd_es1938_playback_trigger,
+	.pointer =	snd_es1938_playback_pointer,
+};
+
+static struct snd_pcm_ops snd_es1938_capture_ops = {
+	.open =		snd_es1938_capture_open,
+	.close =	snd_es1938_capture_close,
+	.ioctl =	snd_pcm_lib_ioctl,
+	.hw_params =	snd_es1938_pcm_hw_params,
+	.hw_free =	snd_es1938_pcm_hw_free,
+	.prepare =	snd_es1938_capture_prepare,
+	.trigger =	snd_es1938_capture_trigger,
+	.pointer =	snd_es1938_capture_pointer,
+	.copy =		snd_es1938_capture_copy,
+};
+static int snd_es1938_new_pcm(struct es1938 *chip, int device)
+{
+	struct snd_pcm *pcm;
+	int err;
+
+	if ((err = snd_pcm_new(chip->card, "es-1938-1946", device, 2, 1, &pcm)) < 0)
+		return err;
+	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_PLAYBACK, &snd_es1938_playback_ops);
+	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_CAPTURE, &snd_es1938_capture_ops);
+	
+	pcm->private_data = chip;
+	pcm->info_flags = 0;
+	strcpy(pcm->name, "ESS Solo-1");
+
+	snd_pcm_lib_preallocate_pages_for_all(pcm, SNDRV_DMA_TYPE_DEV,
+					      snd_dma_pci_data(chip->pci), 64*1024, 64*1024);
+
+	chip->pcm = pcm;
+	return 0;
+}
+/**
+ * snd_pcm_lib_preallocate_pages_for_all - pre-allocation for continuous memory type (all substreams)
+ * @pcm: the pcm instance
+ * @type: DMA type (SNDRV_DMA_TYPE_*)
+ * @data: DMA type dependent data
+ * @size: the requested pre-allocation size in bytes
+ * @max: the max. allowed pre-allocation size
+ *
+ * Do pre-allocation to all substreams of the given pcm for the
+ * specified DMA type.
+ *
+ * Return: Zero if successful, or a negative error code on failure.
+ */
+/**
+ * snd_pcm_set_ops - set the PCM operators
+ * @pcm: the pcm instance
+ * @direction: stream direction, SNDRV_PCM_STREAM_XXX
+ * @ops: the operator table
+ *
+ * Sets the given PCM operators to the pcm instance.
+ */
+
+/**
+ * snd_pcm_new - create a new PCM instance
+ * @card: the card instance
+ * @id: the id string
+ * @device: the device index (zero based)
+ * @playback_count: the number of substreams for playback
+ * @capture_count: the number of substreams for capture
+ * @rpcm: the pointer to store the new pcm instance
+ *
+ * Creates a new PCM instance.
+ *
+ * The pcm operators have to be set afterwards to the new instance
+ * via snd_pcm_set_ops().
+ *
+ * Return: Zero if successful, or a negative error code on failure.
+ */
+
 /**
  * snd_ctl_enum_info - fills the info structure for an enumerated control
  * @info: the structure to be filled
