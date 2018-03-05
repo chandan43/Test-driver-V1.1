@@ -199,14 +199,93 @@ struct es1938 {
 #define WRITE_LOOP_TIMEOUT	0x10000
 #define GET_LOOP_TIMEOUT	0x01000
 
+static snd_pcm_uframes_t snd_es1938_playback_pointer(struct snd_pcm_substream *substream)
+{
+	switch (substream->number) {
+	case 0:
+		return snd_es1938_playback1_pointer(substream); //TODO
+	case 1:
+		return snd_es1938_playback2_pointer(substream); //TODO
+	}
+	snd_BUG();
+	return -EINVAL;
+}
+
+static int snd_es1938_capture_copy(struct snd_pcm_substream *substream,
+				   int channel,
+				   snd_pcm_uframes_t pos,
+				   void __user *dst,
+				   snd_pcm_uframes_t count)
+{
+	struct snd_pcm_runtime *runtime = substream->runtime;
+	struct es1938 *chip = snd_pcm_substream_chip(substream);
+	pos <<= chip->dma1_shift;
+	count <<= chip->dma1_shift;
+	if (snd_BUG_ON(pos + count > chip->dma1_size))
+		return -EINVAL;
+	if (pos + count < chip->dma1_size) {
+		if (copy_to_user(dst, runtime->dma_area + pos + 1, count))
+			return -EFAULT;
+	} else {
+		if (copy_to_user(dst, runtime->dma_area + pos + 1, count - 1))
+			return -EFAULT;
+		if (put_user(runtime->dma_area[0], ((unsigned char __user *)dst) + count - 1))
+			return -EFAULT;
+	}
+	return 0;
+}
+
+/*
+ * buffer management
+ */
+static int snd_es1938_pcm_hw_params(struct snd_pcm_substream *substream,
+				    struct snd_pcm_hw_params *hw_params)
+
+{
+	int err;
+
+	if ((err = snd_pcm_lib_malloc_pages(substream, params_buffer_bytes(hw_params))) < 0)
+		return err;
+	return 0;
+}
+
+static int snd_es1938_pcm_hw_free(struct snd_pcm_substream *substream)
+{
+	return snd_pcm_lib_free_pages(substream);
+}
+
+/* ----------------------------------------------------------------------
+ * Audio1 Capture (ADC)
+ * ----------------------------------------------------------------------*/
+static struct snd_pcm_hardware snd_es1938_capture =
+{
+	.info =			(SNDRV_PCM_INFO_INTERLEAVED |
+				SNDRV_PCM_INFO_BLOCK_TRANSFER),
+	.formats =		(SNDRV_PCM_FMTBIT_U8 | SNDRV_PCM_FMTBIT_S16_LE |
+				 SNDRV_PCM_FMTBIT_S8 | SNDRV_PCM_FMTBIT_U16_LE),
+	.rates =		SNDRV_PCM_RATE_CONTINUOUS | SNDRV_PCM_RATE_8000_48000,
+	.rate_min =		6000,
+	.rate_max =		48000,
+	.channels_min =		1,
+	.channels_max =		2,
+        .buffer_bytes_max =	0x8000,       /* DMA controller screws on higher values */
+	.period_bytes_min =	64,
+	.period_bytes_max =	0x8000,
+	.periods_min =		1,
+	.periods_max =		1024,
+	.fifo_size =		256,
+};
+
+
+
 /* -----------------------------------------------------------------------
  * Audio2 Playback (DAC)
  * -----------------------------------------------------------------------*/
 static struct snd_pcm_hardware snd_es1938_playback =
 {
-	.info =			(SNDRV_PCM_INFO_MMAP | SNDRV_PCM_INFO_INTERLEAVED |
-				 SNDRV_PCM_INFO_BLOCK_TRANSFER |
-				 SNDRV_PCM_INFO_MMAP_VALID),
+	.info =			(SNDRV_PCM_INFO_MMAP | SNDRV_PCM_INFO_INTERLEAVED |          	/* hardware supports mmap */ |/* channels are interleaved */
+				 SNDRV_PCM_INFO_BLOCK_TRANSFER |                          	/* hardware transfer block of samples */
+				 SNDRV_PCM_INFO_MMAP_VALID),					/* period data are valid during transfer */
 	.formats =		(SNDRV_PCM_FMTBIT_U8 | SNDRV_PCM_FMTBIT_S16_LE |
 				 SNDRV_PCM_FMTBIT_S8 | SNDRV_PCM_FMTBIT_U16_LE),
 	.rates =		SNDRV_PCM_RATE_CONTINUOUS | SNDRV_PCM_RATE_8000_48000,
