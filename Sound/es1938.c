@@ -198,6 +198,174 @@ struct es1938 {
 #define RESET_LOOP_TIMEOUT	0x10000
 #define WRITE_LOOP_TIMEOUT	0x10000
 #define GET_LOOP_TIMEOUT	0x01000
+
+/* --------------------------------------------------------------------
+ * First channel for Extended Mode Audio 1 ADC Operation
+ * --------------------------------------------------------------------*/
+static int snd_es1938_capture_prepare(struct snd_pcm_substream *substream)
+{
+	struct es1938 *chip = snd_pcm_substream_chip(substream);
+	struct snd_pcm_runtime *runtime = substream->runtime;
+	int u, is8, mono;
+	unsigned int size = snd_pcm_lib_buffer_bytes(substream);
+	unsigned int count = snd_pcm_lib_period_bytes(substream);
+
+	chip->dma1_size = size;
+	chip->dma1_start = runtime->dma_addr;
+
+	mono = (runtime->channels > 1) ? 0 : 1;
+	is8 = snd_pcm_format_width(runtime->format) == 16 ? 0 : 1;
+	u = snd_pcm_format_unsigned(runtime->format);
+
+	chip->dma1_shift = 2 - mono - is8;
+
+	snd_es1938_reset_fifo(chip);
+	
+	/* program type */
+	snd_es1938_bits(chip, ESS_CMD_ANALOGCONTROL, 0x03, (mono ? 2 : 1));
+
+	/* set clock and counters */
+        snd_es1938_rate_set(chip, substream, ADC1);
+
+	count = 0x10000 - count;
+	snd_es1938_write(chip, ESS_CMD_DMACNTRELOADL, count & 0xff);
+	snd_es1938_write(chip, ESS_CMD_DMACNTRELOADH, count >> 8);
+
+	/* initialize and configure ADC */
+	snd_es1938_write(chip, ESS_CMD_SETFORMAT2, u ? 0x51 : 0x71);
+	snd_es1938_write(chip, ESS_CMD_SETFORMAT2, 0x90 | 
+		       (u ? 0x00 : 0x20) | 
+		       (is8 ? 0x00 : 0x04) | 
+		       (mono ? 0x40 : 0x08));
+
+	//	snd_es1938_reset_fifo(chip);	
+
+	/* 11. configure system interrupt controller and DMA controller */
+	snd_es1938_capture_setdma(chip);
+
+	return 0;
+}
+
+
+/* ------------------------------------------------------------------------------
+ * Second Audio channel DAC Operation
+ * ------------------------------------------------------------------------------*/
+static int snd_es1938_playback1_prepare(struct snd_pcm_substream *substream)
+{
+	struct es1938 *chip = snd_pcm_substream_chip(substream);
+	struct snd_pcm_runtime *runtime = substream->runtime;
+	int u, is8, mono;
+	unsigned int size = snd_pcm_lib_buffer_bytes(substream);
+	unsigned int count = snd_pcm_lib_period_bytes(substream);
+
+	chip->dma2_size = size;
+	chip->dma2_start = runtime->dma_addr;
+
+	mono = (runtime->channels > 1) ? 0 : 1;
+	is8 = snd_pcm_format_width(runtime->format) == 16 ? 0 : 1;
+	u = snd_pcm_format_unsigned(runtime->format);
+
+	chip->dma2_shift = 2 - mono - is8;
+
+        snd_es1938_reset_fifo(chip);
+
+	/* set clock and counters */
+        snd_es1938_rate_set(chip, substream, DAC2);
+
+	count >>= 1;
+	count = 0x10000 - count;
+	snd_es1938_mixer_write(chip, ESSSB_IREG_AUDIO2TCOUNTL, count & 0xff);
+	snd_es1938_mixer_write(chip, ESSSB_IREG_AUDIO2TCOUNTH, count >> 8);
+
+	/* initialize and configure Audio 2 DAC */
+	snd_es1938_mixer_write(chip, ESSSB_IREG_AUDIO2CONTROL2, 0x40 | (u ? 0 : 4) |
+			       (mono ? 0 : 2) | (is8 ? 0 : 1));
+
+	/* program DMA */
+	snd_es1938_playback1_setdma(chip);
+	
+	return 0;
+}
+/**
+ * snd_pcm_lib_buffer_bytes - Get the buffer size of the current PCM in bytes
+ * @substream: PCM substream
+ */
+
+/**
+ * snd_pcm_lib_period_bytes - Get the period size of the current PCM in bytes
+ * @substream: PCM substream
+ */
+/**
+ * snd_pcm_format_width - return the bit-width of the format
+ * @format: the format to check
+ *
+ * Return: The bit-width of the format, or a negative error code
+ * if unknown format.
+ */	
+/**
+ * snd_pcm_format_unsigned - Check the PCM format is unsigned linear
+ * @format: the format to check
+ *
+ * Return: 1 if the given PCM format is unsigned linear, 0 if signed
+ * linear, and a negative error code for non-linear formats.
+ */
+static int snd_es1938_playback2_prepare(struct snd_pcm_substream *substream)
+{
+	
+	struct es1938 *chip = snd_pcm_substream_chip(substream);
+	struct snd_pcm_runtime *runtime = substream->runtime;
+	int u, is8, mono;
+	unsigned int size = snd_pcm_lib_buffer_bytes(substream);
+	unsigned int count = snd_pcm_lib_period_bytes(substream);
+	
+	
+	chip->dma1_size = size;
+	chip->dma1_start = runtime->dma_addr;
+
+	
+	mono = (runtime->channels > 1) ? 0 : 1;
+	is8 = snd_pcm_format_width(runtime->format) == 16 ? 0 : 1;
+	u = snd_pcm_format_unsigned(runtime->format);
+
+	chip->dma1_shift = 2 - mono - is8;
+	
+	count = 0x10000 - count;
+
+	/* reset */
+	snd_es1938_reset_fifo(chip);
+	snd_es1938_bits(chip, ESS_CMD_ANALOGCONTROL, 0x03, (mono ? 2 : 1)); //pg 58
+
+	
+	/* set clock and counters */
+        snd_es1938_rate_set(chip, substream, DAC1);
+	snd_es1938_write(chip, ESS_CMD_DMACNTRELOADL, count & 0xff);
+	snd_es1938_write(chip, ESS_CMD_DMACNTRELOADH, count >> 8);
+	
+	/* initialized and configure DAC */
+        snd_es1938_write(chip, ESS_CMD_SETFORMAT, u ? 0x80 : 0x00);
+        snd_es1938_write(chip, ESS_CMD_SETFORMAT, u ? 0x51 : 0x71);
+        snd_es1938_write(chip, ESS_CMD_SETFORMAT2, 
+			 0x90 | (mono ? 0x40 : 0x08) |
+			 (is8 ? 0x00 : 0x04) | (u ? 0x00 : 0x20));
+
+
+	/* program DMA */
+	snd_es1938_playback2_setdma(chip); //TODO
+	
+	return 0;	
+}
+
+static int snd_es1938_playback_prepare(struct snd_pcm_substream *substream)
+{
+	switch (substream->number) {
+	case 0:
+		return snd_es1938_playback1_prepare(substream);
+	case 1:
+		return snd_es1938_playback2_prepare(substream);
+	}
+	snd_BUG();
+	return -EINVAL;
+}
 /* during the incrementing of dma counters the DMA register reads sometimes
    returns garbage. To ensure a valid hw pointer, the following checks which
    should be very unlikely to fail are used:
