@@ -148,6 +148,7 @@ MODULE_PARM_DESC(enable, "Enable ESS Solo-1 soundcard.");
 
 #define SAVED_REG_SIZE	32 /* max. number of registers to save */
 
+
 struct es1938 {
 	int irq;
 
@@ -198,6 +199,372 @@ struct es1938 {
 #define RESET_LOOP_TIMEOUT	0x10000
 #define WRITE_LOOP_TIMEOUT	0x10000
 #define GET_LOOP_TIMEOUT	0x01000
+/* -----------------------------------------------------------------
+ * Write to a mixer register
+ * -----------------------------------------------------------------*/
+static void snd_es1938_mixer_write(struct es1938 *chip, unsigned char reg, unsigned char val)
+{
+	unsigned long flags;
+	spin_lock_irqsave(&chip->mixer_lock, flags);
+	outb(reg, SLSB_REG(chip, MIXERADDR));
+	outb(val, SLSB_REG(chip, MIXERDATA));
+	spin_unlock_irqrestore(&chip->mixer_lock, flags);
+	dev_dbg(chip->card->dev, "Mixer reg %02x set to %02x\n", reg, val);
+}
+
+/* -----------------------------------------------------------------
+ * Read from a mixer register
+ * -----------------------------------------------------------------*/
+static int snd_es1938_mixer_read(struct es1938 *chip, unsigned char reg)
+{
+	int data;
+	unsigned long flags;
+	spin_lock_irqsave(&chip->mixer_lock, flags);
+	outb(reg, SLSB_REG(chip, MIXERADDR));
+	data = inb(SLSB_REG(chip, MIXERDATA));
+	spin_unlock_irqrestore(&chip->mixer_lock, flags);
+	dev_dbg(chip->card->dev, "Mixer reg %02x now is %02x\n", reg, data);
+	return data;
+}
+
+/* -----------------------------------------------------------------
+ * Write to some bits of a mixer register (return old value)
+ * -----------------------------------------------------------------*/
+static int snd_es1938_mixer_bits(struct es1938 *chip, unsigned char reg,
+				 unsigned char mask, unsigned char val)
+{
+	unsigned long flags;
+	unsigned char old, new, oval;
+	spin_lock_irqsave(&chip->mixer_lock, flags);
+	outb(reg, SLSB_REG(chip, MIXERADDR));
+	old = inb(SLSB_REG(chip, MIXERDATA));
+	oval = old & mask;
+	if (val != oval) {
+		new = (old & ~mask) | (val & mask);
+		outb(new, SLSB_REG(chip, MIXERDATA));
+		dev_dbg(chip->card->dev,
+			"Mixer reg %02x was %02x, set to %02x\n",
+			   reg, old, new);
+	}
+	spin_unlock_irqrestore(&chip->mixer_lock, flags);
+	return oval;
+}
+/* -----------------------------------------------------------------
+ * Write command to Controller Registers
+ * -----------------------------------------------------------------*/
+static void snd_es1938_write_cmd(struct es1938 *chip, unsigned char cmd)
+{
+	int i;
+	unsigned char v;
+	for (i = 0; i < WRITE_LOOP_TIMEOUT; i++) {
+		if (!(v = inb(SLSB_REG(chip, READSTATUS)) & 0x80)) {
+			outb(cmd, SLSB_REG(chip, WRITEDATA));
+			return;
+		}
+	}
+	dev_err(chip->card->dev,
+		"snd_es1938_write_cmd timeout (0x02%x/0x02%x)\n", cmd, v);
+}
+
+/* -----------------------------------------------------------------
+ * Read the Read Data Buffer
+ * -----------------------------------------------------------------*/
+static int snd_es1938_get_byte(struct es1938 *chip)
+{
+	int i;
+	unsigned char v;
+	for (i = GET_LOOP_TIMEOUT; i; i--)
+		if ((v = inb(SLSB_REG(chip, STATUS))) & 0x80)
+			return inb(SLSB_REG(chip, READDATA));
+	dev_err(chip->card->dev, "get_byte timeout: status 0x02%x\n", v);
+	return -ENODEV;
+}
+
+
+/* -----------------------------------------------------------------
+ * Write value cmd register
+ * -----------------------------------------------------------------*/
+static void snd_es1938_write(struct es1938 *chip, unsigned char reg, unsigned char val)
+{
+	unsigned long flags;
+	spin_lock_irqsave(&chip->reg_lock, flags);
+	snd_es1938_write_cmd(chip, reg);
+	snd_es1938_write_cmd(chip, val);
+	spin_unlock_irqrestore(&chip->reg_lock, flags);
+	dev_dbg(chip->card->dev, "Reg %02x set to %02x\n", reg, val);
+}
+
+/* -----------------------------------------------------------------
+ * Read data from cmd register and return it
+ * -----------------------------------------------------------------*/
+static unsigned char snd_es1938_read(struct es1938 *chip, unsigned char reg)
+{
+	unsigned char val;
+	unsigned long flags;
+	spin_lock_irqsave(&chip->reg_lock, flags);
+	snd_es1938_write_cmd(chip, ESS_CMD_READREG);
+	snd_es1938_write_cmd(chip, reg);
+	val = snd_es1938_get_byte(chip);
+	spin_unlock_irqrestore(&chip->reg_lock, flags);
+	dev_dbg(chip->card->dev, "Reg %02x now is %02x\n", reg, val);
+	return val;
+}
+
+/* -----------------------------------------------------------------
+ * Write data to cmd register and return old value
+ * -----------------------------------------------------------------*/
+static int snd_es1938_bits(struct es1938 *chip, unsigned char reg, unsigned char mask,
+			   unsigned char val)
+{
+	unsigned long flags;
+	unsigned char old, new, oval;
+	spin_lock_irqsave(&chip->reg_lock, flags);
+	snd_es1938_write_cmd(chip, ESS_CMD_READREG);
+	snd_es1938_write_cmd(chip, reg);
+	old = snd_es1938_get_byte(chip);
+	oval = old & mask;
+	if (val != oval) {
+		snd_es1938_write_cmd(chip, reg);
+		new = (old & ~mask) | (val & mask);
+		snd_es1938_write_cmd(chip, new);
+		dev_dbg(chip->card->dev, "Reg %02x was %02x, set to %02x\n",
+			   reg, old, new);
+	}
+	spin_unlock_irqrestore(&chip->reg_lock, flags);
+	return oval;
+}
+
+
+/* --------------------------------------------------------------------
+ * Reset the chip
+ * --------------------------------------------------------------------*/
+static void snd_es1938_reset(struct es1938 *chip)
+{
+	
+	int i;
+
+	outb(3, SLSB_REG(chip, RESET));
+	inb(SLSB_REG(chip, RESET));
+	outb(0, SLSB_REG(chip, RESET));
+	for (i = 0; i < RESET_LOOP_TIMEOUT; i++) {
+		if (inb(SLSB_REG(chip, STATUS)) & 0x80) {
+			if (inb(SLSB_REG(chip, READDATA)) == 0xaa)
+				goto __next;
+		}
+	}
+	dev_err(chip->card->dev, "ESS Solo-1 reset failed\n");
+
+     __next:
+	snd_es1938_write_cmd(chip, ESS_CMD_ENABLEEXT);
+
+	/* Demand transfer DMA: 4 bytes per DMA request */
+	snd_es1938_write(chip, ESS_CMD_DMATYPE, 2);
+
+	/* Change behaviour of register A1
+	   4x oversampling
+	   2nd channel DAC asynchronous */                                                      
+	snd_es1938_mixer_write(chip, ESSSB_IREG_AUDIO2MODE, 0x32);
+	/* enable/select DMA channel and IRQ channel */
+	snd_es1938_bits(chip, ESS_CMD_IRQCONTROL, 0xf0, 0x50);
+	snd_es1938_bits(chip, ESS_CMD_DRQCONTROL, 0xf0, 0x50);
+	snd_es1938_write_cmd(chip, ESS_CMD_ENABLEAUDIO1);
+	/* Set spatializer parameters to recommended values */
+	snd_es1938_mixer_write(chip, 0x54, 0x8f);
+	snd_es1938_mixer_write(chip, 0x56, 0x95);
+	snd_es1938_mixer_write(chip, 0x58, 0x94);
+	snd_es1938_mixer_write(chip, 0x5a, 0x80);
+}
+/* --------------------------------------------------------------------
+ * Reset the FIFOs
+ * --------------------------------------------------------------------*/
+static void snd_es1938_reset_fifo(struct es1938 *chip)
+{
+	outb(2, SLSB_REG(chip, RESET));
+	outb(0, SLSB_REG(chip, RESET));
+}
+
+static struct nd_ratnum clocks[2] = {
+	{
+		.num = 793800,
+		.den_min = 1,
+		.den_max = 128,
+		.den_step = 1,
+	},
+	{
+		.num = 768000,
+		.den_min = 1,
+		.den_max = 128,
+		.den_step = 1,
+	}
+};
+
+static struct snd_pcm_hw_constraint_ratnums hw_constraints_clocks = {
+	.nrats = 2,
+	.rats = clocks,
+};
+
+
+static void snd_es1938_rate_set(struct es1938 *chip, 
+				struct snd_pcm_substream *substream,
+				int mode)
+{
+	unsigned int bits, div0;
+	struct snd_pcm_runtime *runtime = substream->runtime;
+	if (runtime->rate_num == clocks[0].num)
+		bits = 128 - runtime->rate_den;
+	else
+		bits = 256 - runtime->rate_den;
+
+	/* set filter register */
+	div0 = 256 - 7160000*20/(8*82*runtime->rate);
+		
+	if (mode == DAC2) {
+		snd_es1938_mixer_write(chip, 0x70, bits);
+		snd_es1938_mixer_write(chip, 0x72, div0);
+	} else {
+		snd_es1938_write(chip, 0xA1, bits);
+		snd_es1938_write(chip, 0xA2, div0);
+	}
+}
+
+/* --------------------------------------------------------------------
+ * Configure Solo1 builtin DMA Controller
+ * --------------------------------------------------------------------*/
+static void snd_es1938_playback1_setdma(struct es1938 *chip)
+{
+	outb(0x00, SLIO_REG(chip, AUDIO2MODE));
+	outl(chip->dma2_start, SLIO_REG(chip, AUDIO2DMAADDR));
+	outw(0, SLIO_REG(chip, AUDIO2DMACOUNT));
+	outw(chip->dma2_size, SLIO_REG(chip, AUDIO2DMACOUNT));
+}
+
+
+static void snd_es1938_playback2_setdma(struct es1938 *chip)
+{
+	/* Enable DMA controller */
+	outb(0xc4, SLDM_REG(chip, DMACOMMAND));
+	/* 1. Master reset */
+	outb(0, SLDM_REG(chip, DMACLEAR));
+	/* 2. Mask DMA */
+	outb(1, SLDM_REG(chip, DMAMASK));
+	outb(0x18, SLDM_REG(chip, DMAMODE));
+	outl(chip->dma1_start, SLDM_REG(chip, DMAADDR));
+	outw(chip->dma1_size - 1, SLDM_REG(chip, DMACOUNT));
+	/* 3. Unmask DMA */
+	outb(0, SLDM_REG(chip, DMAMASK));
+}
+
+
+static void snd_es1938_capture_setdma(struct es1938 *chip)
+{
+	/* Enable DMA controller */
+	outb(0xc4, SLDM_REG(chip, DMACOMMAND));
+	/* 1. Master reset */
+	outb(0, SLDM_REG(chip, DMACLEAR));
+	/* 2. Mask DMA */
+	outb(1, SLDM_REG(chip, DMAMASK));
+	outb(0x14, SLDM_REG(chip, DMAMODE));
+	outl(chip->dma1_start, SLDM_REG(chip, DMAADDR));
+	chip->last_capture_dmaaddr = chip->dma1_start;
+	outw(chip->dma1_size - 1, SLDM_REG(chip, DMACOUNT));
+	/* 3. Unmask DMA */
+	outb(0, SLDM_REG(chip, DMAMASK));
+}
+
+/* ----------------------------------------------------------------------
+ *
+ *                           *** PCM part ***
+ */
+
+static int snd_es1938_capture_trigger(struct snd_pcm_substream *substream,
+				      int cmd)
+{
+	struct es1938 *chip = snd_pcm_substream_chip(substream);
+	int val;
+	switch (cmd) {
+	case SNDRV_PCM_TRIGGER_START:
+	case SNDRV_PCM_TRIGGER_RESUME:
+		val = 0x0f;
+		chip->active |= ADC1;
+		break;
+	case SNDRV_PCM_TRIGGER_STOP:
+	case SNDRV_PCM_TRIGGER_SUSPEND:
+		val = 0x00;
+		chip->active &= ~ADC1;
+		break;
+	default:
+		return -EINVAL;
+	}
+	snd_es1938_write(chip, ESS_CMD_DMACONTROL, val);
+	return 0;
+}
+
+static int snd_es1938_playback1_trigger(struct snd_pcm_substream *substream,
+					int cmd)
+{
+	struct es1938 *chip = snd_pcm_substream_chip(substream);
+	switch (cmd) {
+	case SNDRV_PCM_TRIGGER_START:
+	case SNDRV_PCM_TRIGGER_RESUME:
+		/* According to the documentation this should be:
+		   0x13 but that value may randomly swap stereo channels */
+                snd_es1938_mixer_write(chip, ESSSB_IREG_AUDIO2CONTROL1, 0x92); //pg 57
+                udelay(10);
+		snd_es1938_mixer_write(chip, ESSSB_IREG_AUDIO2CONTROL1, 0x93); //pg 
+                /* This two stage init gives the FIFO -> DAC connection time to
+                 * settle before first data from DMA flows in.  This should ensure
+                 * no swapping of stereo channels.  Report a bug if otherwise :-) */
+		outb(0x0a, SLIO_REG(chip, AUDIO2MODE)); //pg .28
+		chip->active |= DAC2;
+		break;
+	case SNDRV_PCM_TRIGGER_STOP:
+	case SNDRV_PCM_TRIGGER_SUSPEND:
+		outb(0, SLIO_REG(chip, AUDIO2MODE));
+		snd_es1938_mixer_write(chip, ESSSB_IREG_AUDIO2CONTROL1, 0);
+		chip->active &= ~DAC2;
+		break;
+	default:
+		return -EINVAL;
+	}
+	return 0;
+}
+
+static int snd_es1938_playback2_trigger(struct snd_pcm_substream *substream,
+					int cmd)
+{
+	struct es1938 *chip = snd_pcm_substream_chip(substream);
+	int val;
+	switch (cmd) {
+	case SNDRV_PCM_TRIGGER_START:
+	case SNDRV_PCM_TRIGGER_RESUME:
+		val = 5;
+		chip->active |= DAC1;
+		break;
+	case SNDRV_PCM_TRIGGER_STOP:
+	case SNDRV_PCM_TRIGGER_SUSPEND:
+		val = 0;
+		chip->active &= ~DAC1;
+		break;
+	default:
+		return -EINVAL;
+	}
+	snd_es1938_write(chip, ESS_CMD_DMACONTROL, val);
+	return 0;
+}
+
+static int snd_es1938_playback_trigger(struct snd_pcm_substream *substream,
+				       int cmd)
+{
+	switch (substream->number) {
+	case 0:
+		return snd_es1938_playback1_trigger(substream, cmd);
+	case 1:
+		return snd_es1938_playback2_trigger(substream, cmd);
+	}
+	snd_BUG();
+	return -EINVAL;
+}
+
 
 /* --------------------------------------------------------------------
  * First channel for Extended Mode Audio 1 ADC Operation
