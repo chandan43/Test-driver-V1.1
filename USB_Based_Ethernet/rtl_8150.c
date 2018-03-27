@@ -229,21 +229,104 @@ static int set_registers(rtl8150_t *dev, u16 indx, u16 size, const void *data)
 	return ret;		
 } 
 
+/**
+ *	netdev_priv - access network device private data
+ *	@dev: network device
+ *
+ * Get network device private data
+ */
 static  int rtl8150_probe(struct usb_interface *intf, 
 			   const struct usb_device_id *id)
 {
+	struct usb_device *udev = interface_to_usbdev(intf);
+	rtl8150_t *dev;
+	struct net_device *netdev;
+		
+	netdev = alloc_etherdev(sizeof(rtl8150_t));
+
+	if (!netdev)
+		return -ENOMEM;
+
+	dev = netdev_priv(netdev);
+	
+	dev->intr_buff = kmalloc(INTBUFSIZE, GFP_KERNEL);
+	if (!dev->intr_buff) {
+		free_netdev(netdev);
+		return -ENOMEM;
+	}
+	
+	tasklet_init(&dev->tl, rx_fixup, (unsigned long)dev);
+	spin_lock_init(&dev->rx_pool_lock);
+
+	dev->udev = udev;
+	dev->netdev = netdev;
+	netdev->netdev_ops = &rtl8150_netdev_ops;
+	netdev->watchdog_timeo = RTL8150_TX_TIMEOUT;
+	netdev->ethtool_ops = &ops;
+	dev->intr_interval = 100;	/* 100ms */
+
+	/*TODO:*/
+	if (!alloc_all_urbs(dev)) {
+		dev_err(&intf->dev, "out of memory\n");
+		goto out;
+	}
+	if (!rtl8150_reset(dev)) {
+		dev_err(&intf->dev, "couldn't reset the device\n");
+		goto out1;
+	}
+	fill_skb_pool(dev);	//TODO
+
+	
+	usb_set_intfdata(intf, dev);
+	
+	/* Set the sysfs physical device reference for the network logical device
+ 	* if set prior to registration will cause a symlink during initialization.
+ 	*/
+	SET_NETDEV_DEV(netdev, &intf->dev);
+	if (register_netdev(netdev) != 0) {
+		dev_err(&intf->dev, "couldn't register the device\n");
+		goto out2;
+	}
+	dev_info(&intf->dev, "%s: rtl8150 is detected\n", netdev->name);
 	return 0;
+out2:
+	usb_set_intfdata(intf, NULL);
+	free_skb_pool(dev);
+out1:
+	free_all_urbs(dev);
+out:
+	kfree(dev->intr_buff);
+	free_netdev(netdev);
+	return -EIO;
 }
 
 static void rtl8150_disconnect(struct usb_interface *intf)
 {
-	
+	rtl8150_t *dev = usb_get_intfdata(intf);
+
+	usb_set_intfdata(intf, NULL);
+	if (dev) {
+		set_bit(RTL8150_UNPLUG, &dev->flags);
+		tasklet_kill(&dev->tl);
+		unregister_netdev(dev->netdev);
+		unlink_all_urbs(dev);
+		free_all_urbs(dev); //TODO
+		free_skb_pool(dev); //TODO
+		if (dev->rx_skb)
+			dev_kfree_skb(dev->rx_skb);
+		kfree(dev->intr_buff);
+		free_netdev(dev->netdev);
+	}
+			
 }
 static struct usb_driver rtl8150_driver = {
 	.name		= driver_name,
 	.probe		= rtl8150_probe,
 	.disconnect	= rtl8150_disconnect,
 	.id_table	= rtl8150_table,
+	.suspend	= rtl8150_suspend,
+	.resume		= rtl8150_resume,
+	.disable_hub_initiated_lpm = 1,
 };
 
 MODULE_AUTHOR("Chandan Jha <beingchandanjha@gmail.com>");
