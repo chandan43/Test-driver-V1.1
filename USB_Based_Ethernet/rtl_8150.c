@@ -229,6 +229,102 @@ static int set_registers(rtl8150_t *dev, u16 indx, u16 size, const void *data)
 	return ret;		
 } 
 
+/* -----------------------------------------------------------------
+ * URB : Communication with usb devices  
+ * -----------------------------------------------------------------*/
+
+/**
+ * usb_alloc_urb - creates a new urb for a USB driver to use
+ * @iso_packets: number of iso packets for this urb
+ * @mem_flags: the type of memory to allocate, see kmalloc() for a list of
+ *	valid options for this.
+ *
+ * Creates an urb for the USB driver to use, initializes a few internal
+ * structures, incrementes the usage counter, and returns a pointer to it.
+ *
+ * If no memory is available, NULL is returned.
+ *
+ * If the driver want to use this urb for interrupt, control, or bulk
+ * endpoints, pass '0' as the number of iso packets.
+ *
+ * The driver must call usb_free_urb() when it is finished with the urb.
+ */
+static int alloc_all_urbs(rtl8150_t * dev)
+{
+	dev->rx_urb = usb_alloc_urb(0, GFP_KERNEL);
+	if (!dev->rx_urb)
+		return 0;
+	dev->tx_urb = usb_alloc_urb(0, GFP_KERNEL);
+	if (!dev->tx_urb) {
+		usb_free_urb(dev->rx_urb);
+		return 0;
+	}
+	dev->intr_urb = usb_alloc_urb(0, GFP_KERNEL);
+	if (!dev->intr_urb) {
+		usb_free_urb(dev->rx_urb);
+		usb_free_urb(dev->tx_urb);
+		return 0;
+	}
+
+	return 1;
+}
+
+static void free_all_urbs(rtl8150_t * dev)
+{
+	usb_free_urb(dev->rx_urb);
+	usb_free_urb(dev->tx_urb);
+	usb_free_urb(dev->intr_urb);
+}
+
+static void unlink_all_urbs(rtl8150_t * dev)
+{
+	usb_kill_urb(dev->rx_urb);
+	usb_kill_urb(dev->tx_urb);
+	usb_kill_urb(dev->intr_urb);
+}
+
+static const struct ethtool_ops ops = {
+	.get_drvinfo = rtl8150_get_drvinfo,
+	.get_link = ethtool_op_get_link,
+	.get_link_ksettings = rtl8150_get_link_ksettings,
+};
+
+static int rtl8150_ioctl(struct net_device *netdev, 
+				struct ifreq *rq, int cmd)
+{
+	rtl8150_t *dev = netdev_priv(netdev);
+	u16 *data = (u16 *) & rq->ifr_ifru;
+	int res = 0;
+
+	switch (cmd) {
+		case SIOCDEVPRIVATE:
+			data[0] = dev->phy;
+		case SIOCDEVPRIVATE + 1:
+			read_mii_word(dev, dev->phy, (data[1] & 0x1f), &data[3]);
+			break;
+		case SIOCDEVPRIVATE + 2:
+			if (!capable(CAP_NET_ADMIN))
+				return -EPERM;
+			write_mii_word(dev, dev->phy, (data[1] & 0x1f), data[2]);
+			break;
+		default: 
+			res = -EOPNOTSUPP;
+	}
+	return res;
+}
+
+static const struct net_device_ops rtl8150_netdev_ops = {
+	.ndo_open		= rtl8150_open,
+	.ndo_stop		= rtl8150_close,
+	.ndo_do_ioctl		= rtl8150_ioctl,
+	.ndo_start_xmit		= rtl8150_start_xmit,
+	.ndo_tx_timeout		= rtl8150_tx_timeout,
+	.ndo_set_rx_mode	= rtl8150_set_multicast,
+	.ndo_set_mac_address	= rtl8150_set_mac_address,
+
+	.ndo_validate_addr	= eth_validate_addr,
+};
+
 /**
  *	netdev_priv - access network device private data
  *	@dev: network device
