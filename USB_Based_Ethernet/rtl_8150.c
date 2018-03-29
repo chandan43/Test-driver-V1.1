@@ -283,6 +283,177 @@ static void unlink_all_urbs(rtl8150_t * dev)
 	usb_kill_urb(dev->intr_urb);
 }
 
+/**
+ * usb_fill_bulk_urb - macro to help initialize a bulk urb
+ * @urb: pointer to the urb to initialize.
+ * @dev: pointer to the struct usb_device for this urb.
+ * @pipe: the endpoint pipe
+ * @transfer_buffer: pointer to the transfer buffer
+ * @buffer_length: length of the transfer buffer
+ * @complete_fn: pointer to the usb_complete_t function
+ * @context: what to set the urb context to.
+ *
+ * Initializes a bulk urb with the proper information needed to submit it
+ * to a device.
+ */
+/*-------------------------------------------------------------------*/
+
+/**
+ * usb_submit_urb - issue an asynchronous transfer request for an endpoint
+ * @urb: pointer to the urb describing the request
+ * @mem_flags: the type of memory to allocate, see kmalloc() for a list
+ *	of valid options for this.
+ *
+ * This submits a transfer request, and transfers control of the URB
+ * describing that request to the USB subsystem.  Request completion will
+ * be indicated later, asynchronously, by calling the completion handler.
+ * The three types of completion are success, error, and unlink
+ * (a software-induced fault, also called "request cancellation").
+ *
+ * URBs may be submitted in interrupt context.
+ */
+/**
+ * netif_device_detach - mark device as removed
+ * @dev: network device
+ *
+ * Mark device as removed from system and therefore no longer available.
+ */
+/**
+ *	netif_start_queue - allow transmit
+ *	@dev: network device
+ *
+ *	Allow upper layers to call the device hard_start_xmit routine.
+ */
+
+static int rtl8150_open(struct net_device *netdev)
+{
+	rtl8150_t *dev = netdev_priv(netdev);
+	int res;
+	
+	if (dev->rx_skb == NULL)
+		dev->rx_skb = pull_skb(dev);
+	if (!dev->rx_skb)
+		return -ENOMEM;
+	set_registers(dev, IDR, 6, netdev->dev_addr);
+	usb_fill_bulk_urb(dev->rx_urb, dev->udev, usb_rcvbulkpipe(dev->udev, 1),
+		      dev->rx_skb->data, RTL8150_MTU, read_bulk_callback, dev);
+	if ((res = usb_submit_urb(dev->rx_urb, GFP_KERNEL))) {
+		if (res == -ENODEV)
+			netif_device_detach(dev->netdev);
+		dev_warn(&netdev->dev, "rx_urb submit failed: %d\n", res);
+		return res;
+	}
+	usb_fill_int_urb(dev->intr_urb, dev->udev, usb_rcvintpipe(dev->udev, 3),
+		     dev->intr_buff, INTBUFSIZE, intr_callback,
+		     dev, dev->intr_interval);
+	if ((res = usb_submit_urb(dev->intr_urb, GFP_KERNEL))) {
+		if (res == -ENODEV)
+			netif_device_detach(dev->netdev);
+		dev_warn(&netdev->dev, "intr_urb submit failed: %d\n", res);
+		usb_kill_urb(dev->rx_urb);
+		return res;
+	}
+	enable_net_traffic(dev); //TODO:
+	set_carrier(netdev); //TODO
+	netif_start_queue(netdev);
+
+	return res;
+}
+
+static int rtl8150_close(struct net_device *netdev)
+{
+	rtl8150_t *dev = netdev_priv(netdev);
+
+	netif_stop_queue(netdev);
+	if (!test_bit(RTL8150_UNPLUG, &dev->flags)) //TODO
+		disable_net_traffic(dev);
+	unlink_all_urbs(dev);
+
+	return 0;	
+
+}
+
+/**
+ * usb_make_path - returns stable device path in the usb tree
+ * @dev: the device whose path is being constructed
+ * @buf: where to put the string
+ * @size: how big is "buf"?
+ *
+ * Return: Length of the string (> 0) or negative if size was too small.
+ *
+ * Note:
+ * This identifier is intended to be "stable", reflecting physical paths in
+ * hardware such as physical bus addresses for host controllers or ports on
+ * USB hubs.  That makes it stay the same until systems are physically
+ * reconfigured, by re-cabling a tree of USB devices or by moving USB host
+ * controllers.  Adding and removing devices, including virtual root hubs
+ * in host controller driver modules, does not change these path identifiers;
+ * neither does rebooting or re-enumerating.  These are more useful identifiers
+ * than changeable ("unstable") ones like bus numbers or device addresses.
+ *
+ * With a partial exception for devices connected to USB 2.0 root hubs, these
+ * identifiers are also predictable.  So long as the device tree isn't changed,
+ * plugging any USB device into a given hub port always gives it the same path.
+ * Because of the use of "companion" controllers, devices connected to ports on
+ * USB 2.0 root hubs (EHCI host controllers) will get one path ID if they are
+ * high speed, and a different one if they are full or low speed.
+ */
+
+static void rtl8150_get_drvinfo(struct net_device *netdev, struct ethtool_drvinfo *info)
+{
+	rtl8150_t *dev = netdev_priv(netdev);
+	strlcpy(info->driver, driver_name, sizeof(info->driver));
+	strlcpy(info->version, DRIVER_VERSION, sizeof(info->version));
+	usb_make_path(dev->udev, info->bus_info, sizeof(info->bus_info));
+}
+
+static int rtl8150_get_link_ksettings(struct net_device *netdev,
+				      struct ethtool_link_ksettings *ecmd)
+{
+	rtl8150_t *dev = netdev_priv(netdev);
+	/* Link partner ability register. */
+	short lpa, bmcr;
+	u32 supported;
+
+
+	/**/	
+	supported = (SUPPORTED_10baseT_Half |
+			  SUPPORTED_10baseT_Full |
+			  SUPPORTED_100baseT_Half |
+			  SUPPORTED_100baseT_Full |
+			  SUPPORTED_Autoneg |
+			  SUPPORTED_TP | SUPPORTED_MII);
+	ecmd->base.port = PORT_TP;
+	ecmd->base.phy_address = dev->phy;
+
+	get_registers(dev, BMCR, 2, &bmcr);
+	i, ANLP, 2, &lpa);
+
+	if (bmcr & BMCR_ANENABLE) {
+		u32 speed = ((lpa & (LPA_100HALF | LPA_100FULL)) ?
+			     SPEED_100 : SPEED_10);
+		ecmd->base.speed = speed;
+		ecmd->base.autoneg = AUTONEG_ENABLE;
+		if (speed == SPEED_100)
+			ecmd->base.duplex = (lpa & LPA_100FULL) ?
+			    DUPLEX_FULL : DUPLEX_HALF;
+		else
+			ecmd->base.duplex = (lpa & LPA_10FULL) ?
+			    DUPLEX_FULL : DUPLEX_HALF;
+	} else {
+		ecmd->base.autoneg = AUTONEG_DISABLE;
+		ecmd->base.speed = ((bmcr & BMCR_SPEED100) ?
+					     SPEED_100 : SPEED_10);
+		ecmd->base.duplex = (bmcr & BMCR_FULLDPLX) ?
+		    DUPLEX_FULL : DUPLEX_HALF;
+	}
+	ethtool_convert_legacy_u32_to_link_mode(ecmd->link_modes.supported,
+						supported);
+
+	return 0;	
+}
+
+
 static const struct ethtool_ops ops = {
 	.get_drvinfo = rtl8150_get_drvinfo,
 	.get_link = ethtool_op_get_link,
