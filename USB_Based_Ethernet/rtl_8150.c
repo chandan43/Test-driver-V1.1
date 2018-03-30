@@ -94,10 +94,10 @@ enum INT {
 
 /* rtl8150 flags */
 enum RTL_FLAGS {
-	RTL8150_HW_CRC		0,
-	RX_REG_SET		1,
-	RTL8150_UNPLUG		2,
-	RX_URB_FAIL		3,
+	RTL8150_HW_CRC		= 0,
+	RX_REG_SET		= 1,
+	RTL8150_UNPLUG		= 2,
+	RX_URB_FAIL		= 3,
 };
 
 
@@ -282,6 +282,85 @@ static void unlink_all_urbs(rtl8150_t * dev)
 	usb_kill_urb(dev->tx_urb);
 	usb_kill_urb(dev->intr_urb);
 }
+static void rx_fixup(unsigned long data)
+{
+	struct rtl8150 *dev = (struct rtl8150 *)data;
+	struct sk_buff *skb;
+	int status;
+
+	spin_lock_irq(&dev->rx_pool_lock);
+	fill_skb_pool(dev);
+	spin_unlock_irq(&dev->rx_pool_lock);
+	
+	if (test_bit(RX_URB_FAIL, &dev->flags))
+		if (dev->rx_skb)
+			goto try_again;
+	spin_lock_irq(&dev->rx_pool_lock);
+	skb = pull_skb(dev);
+	spin_unlock_irq(&dev->rx_pool_lock);
+	if (skb == NULL)
+		goto tlsched;
+	dev->rx_skb = skb;
+	usb_fill_bulk_urb(dev->rx_urb, dev->udev, usb_rcvbulkpipe(dev->udev, 1),
+		      dev->rx_skb->data, RTL8150_MTU, read_bulk_callback, dev);
+	
+try_again:
+	status = usb_submit_urb(dev->rx_urb, GFP_ATOMIC);
+	if (status == -ENODEV) {
+		netif_device_detach(dev->netdev);
+	} else if (status) {
+		set_bit(RX_URB_FAIL, &dev->flags);
+		goto tlsched;
+	} else {
+		clear_bit(RX_URB_FAIL, &dev->flags);
+	}
+
+	return;
+tlsched:
+	tasklet_schedule(&dev->tl);
+	
+
+	
+}
+
+static int enable_net_traffic(rtl8150_t * dev)
+{
+	u8 cr, tcr, rcr, msr;
+	if (!rtl8150_reset(dev)) {
+		dev_warn(&dev->udev->dev, "device reset failed\n");
+	}
+	/* RCR bit7=1 attach Rx info at the end;  =0 HW CRC (which is broken) */
+	rcr = 0x9e;
+	tcr = 0xd8;
+	cr = 0x0c; //Pg 17: CR
+	if (!(rcr & 0x80))
+		set_bit(RTL8150_HW_CRC, &dev->flags);
+	
+	set_registers(dev, RCR, 1, &rcr);
+	set_registers(dev, TCR, 1, &tcr);
+	set_registers(dev, CR, 1, &cr);
+	get_registers(dev, MSR, 1, &msr);
+
+	return 0;	
+}
+
+static void disable_net_traffic(rtl8150_t * dev)
+{
+	u8 cr;
+
+	get_registers(dev, CR, 1, &cr);
+	cr &= 0xf3; // page 17
+	set_registers(dev, CR, 1, &cr);
+}
+
+
+static void rtl8150_tx_timeout(struct net_device *netdev)
+{
+	rtl8150_t *dev = netdev_priv(netdev);
+	dev_warn(&netdev->dev, "Tx timeout.\n");
+	usb_unlink_urb(dev->tx_urb);
+	netdev->stats.tx_errors++;
+}
 
 /**
  *	netif_stop_queue - stop transmitted packets
@@ -290,6 +369,56 @@ static void unlink_all_urbs(rtl8150_t * dev)
  *	Stop upper layers calling the device hard_start_xmit routine.
  *	Used for flow control when transmit resources are unavailable.
  */
+/**
+ *	netif_wake_queue - restart transmit
+ *	@dev: network device
+ *
+ *	Allow upper layers to call the device hard_start_xmit routine.
+ *	Used for flow control when transmit resources are available.
+ */
+static void rtl8150_set_multicast(struct net_device *netdev)
+{
+	rtl8150_t *dev = netdev_priv(netdev);
+	u16 rx_creg = 0x9e; //page 18 :Receive Configuration Register
+
+	netif_stop_queue(netdev);
+	
+	if (netdev->flags & IFF_PROMISC) { /* receive all packets */
+		rx_creg |= 0x0001;
+		dev_info(&netdev->dev, "%s: promiscuous mode\n", netdev->name);
+	}else if (!netdev_mc_empty(netdev) ||
+		   (netdev->flags & IFF_ALLMULTI)) {  /* receive all multicast packets*/
+		rx_creg &= 0xfffe;
+		rx_creg |= 0x0002;
+		dev_info(&netdev->dev, "%s: allmulti set\n", netdev->name);
+	} else {
+		/* ~RX_MULTICAST, ~RX_PROMISCUOUS */
+		rx_creg &= 0x00fc;
+	}
+	async_set_registers(dev, RCR, sizeof(rx_creg), rx_creg); //TODO
+	netif_wake_queue(netdev);	
+}
+
+/**
+ *	netif_stop_queue - stop transmitted packets
+ *	@dev: network device
+ *
+ *	Stop upper layers calling the device hard_start_xmit routine.
+ *	Used for flow control when transmit resources are unavailable.
+ */
+/**
+ * usb_fill_bulk_urb - macro to help initialize a bulk urb
+ * @urb: pointer to the urb to initialize.
+ * @dev: pointer to the struct usb_device for this urb.
+ * @pipe: the endpoint pipe
+ * @transfer_buffer: pointer to the transfer buffer
+ * @buffer_length: length of the transfer buffer
+ * @complete_fn: pointer to the usb_complete_t function
+ * @context: what to set the urb context to.
+ *
+ * Initializes a bulk urb with the proper information needed to submit it
+ * to a device.
+ */
 static netdev_tx_t rtl8150_start_xmit(struct sk_buff *skb,
 					    struct net_device *netdev)
 {
@@ -297,8 +426,9 @@ static netdev_tx_t rtl8150_start_xmit(struct sk_buff *skb,
 	int count, res;
 
 	netif_stop_queue(netdev);
-	count = (skb->len < 60) ? 60 : skb->len;
-	count = (count & 0x3f) ? count : count + 1; //TODO
+	count = (skb->len < 60) ? 60 : skb->len; 
+	/*Max packet size is 64 bytes :  x & 0x3f = 60 and if 64 then count will be 1.*/
+	count = (count & 0x3f) ? count : count + 1; 
 	
 	dev->tx_skb = skb;
 	usb_fill_bulk_urb(dev->tx_urb, dev->udev, usb_sndbulkpipe(dev->udev, 2),
@@ -311,12 +441,12 @@ static netdev_tx_t rtl8150_start_xmit(struct sk_buff *skb,
 		else {
 			dev_warn(&netdev->dev, "failed tx_urb %d\n", res);
 			netdev->stats.tx_errors++;
-			netif_start_queue(netdev);
+			netif_start_queue(netdev); 
 		}
 	} else {
 		netdev->stats.tx_packets++;
 		netdev->stats.tx_bytes += skb->len;
-		netif_trans_update(netdev);
+		netif_trans_update(netdev); //Updating 
 	}
 
 	return NETDEV_TX_OK;
