@@ -284,6 +284,61 @@ static void unlink_all_urbs(rtl8150_t * dev)
 }
 
 /**
+ *	netif_stop_queue - stop transmitted packets
+ *	@dev: network device
+ *
+ *	Stop upper layers calling the device hard_start_xmit routine.
+ *	Used for flow control when transmit resources are unavailable.
+ */
+static netdev_tx_t rtl8150_start_xmit(struct sk_buff *skb,
+					    struct net_device *netdev)
+{
+	rtl8150_t *dev = netdev_priv(netdev);
+	int count, res;
+
+	netif_stop_queue(netdev);
+	count = (skb->len < 60) ? 60 : skb->len;
+	count = (count & 0x3f) ? count : count + 1; //TODO
+	
+	dev->tx_skb = skb;
+	usb_fill_bulk_urb(dev->tx_urb, dev->udev, usb_sndbulkpipe(dev->udev, 2),
+		      skb->data, count, write_bulk_callback, dev);
+	
+	if ((res = usb_submit_urb(dev->tx_urb, GFP_ATOMIC))) {
+		/* Can we get/handle EPIPE here? */
+		if (res == -ENODEV)
+			netif_device_detach(dev->netdev);
+		else {
+			dev_warn(&netdev->dev, "failed tx_urb %d\n", res);
+			netdev->stats.tx_errors++;
+			netif_start_queue(netdev);
+		}
+	} else {
+		netdev->stats.tx_packets++;
+		netdev->stats.tx_bytes += skb->len;
+		netif_trans_update(netdev);
+	}
+
+	return NETDEV_TX_OK;
+}
+/**
+ *	netif_carrier_on - set carrier
+ *	@dev: network device
+ *
+ * Device has detected that carrier.
+ */
+static void set_carrier(struct net_device *netdev)
+{
+	rtl8150_t *dev = netdev_priv(netdev);
+	short tmpe
+	
+	get_registers(dev, CSCR, 2, &tmp);
+	if (tmp & CSCR_LINK_STATUS)
+		netif_carrier_on(netdev);
+	else
+		netif_carrier_off(netdev);	
+}
+/**
  * usb_fill_bulk_urb - macro to help initialize a bulk urb
  * @urb: pointer to the urb to initialize.
  * @dev: pointer to the struct usb_device for this urb.
@@ -360,12 +415,21 @@ static int rtl8150_open(struct net_device *netdev)
 	return res;
 }
 
+#if 0 /* Fool kernel-doc since it doesn't do macros yet */
+/**
+ * test_bit - Determine whether a bit is set
+ * @nr: bit number to test
+ * @addr: Address to start counting from
+ */
+static int test_bit(int nr, const volatile unsigned long *addr);
+#endif
+
 static int rtl8150_close(struct net_device *netdev)
 {
 	rtl8150_t *dev = netdev_priv(netdev);
 
 	netif_stop_queue(netdev);
-	if (!test_bit(RTL8150_UNPLUG, &dev->flags)) //TODO
+	if (!test_bit(RTL8150_UNPLUG, &dev->flags)) 
 		disable_net_traffic(dev);
 	unlink_all_urbs(dev);
 
@@ -595,6 +659,8 @@ static struct usb_driver rtl8150_driver = {
 	.resume		= rtl8150_resume,
 	.disable_hub_initiated_lpm = 1,
 };
+
+module_usb_driver(rtl8150_driver);
 
 MODULE_AUTHOR("Chandan Jha <beingchandanjha@gmail.com>");
 MODULE_DESCRIPTION("rtl8150 based usb-ethernet driver");
