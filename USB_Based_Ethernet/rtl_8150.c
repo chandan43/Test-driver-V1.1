@@ -282,6 +282,50 @@ static void unlink_all_urbs(rtl8150_t * dev)
 	usb_kill_urb(dev->tx_urb);
 	usb_kill_urb(dev->intr_urb);
 }
+/**
+ *	skb_reserve - adjust headroom
+ *	@skb: buffer to alter
+ *	@len: bytes to move
+ *
+ *	Increase the headroom of an empty &sk_buff by reducing the tail
+ *	room. This is only allowed for an empty buffer.
+ */
+static void fill_skb_pool(rtl8150_t *dev)
+{
+	struct sk_buff *skb;
+	int i;
+	for (i = 0; i < RX_SKB_POOL_SIZE; i++) {
+		if (dev->rx_skb_pool[i])
+			continue;
+		skb = dev_alloc_skb(RTL8150_MTU + 2);
+		if (!skb) {
+			return;
+		}
+		skb_reserve(skb, 2);
+		dev->rx_skb_pool[i] = skb;
+	}
+}
+/*
+**
+**	network related part of the code
+**
+*/
+/*#define dev_kfree_skb(a)	consume_skb(a)*/
+/**
+ *	consume_skb - free an skbuff
+ *	@skb: buffer to free
+ *
+ *	Drop a ref to the buffer and free it if the usage count has hit zero
+ *	Functions identically to kfree_skb, but kfree_skb assumes that the frame
+ *	is being dropped after a failure and notes that
+ */
+static void free_skb_pool(rtl8150_t *dev)
+{
+	int i;
+	for (i = 0; i < RX_SKB_POOL_SIZE; i++)
+		if (dev->rx_skb_pool[i])
+			dev_kfree_skb(dev->rx_skb_pool[i]);
+}
 static void rx_fixup(unsigned long data)
 {
 	struct rtl8150 *dev = (struct rtl8150 *)data;
@@ -318,9 +362,6 @@ try_again:
 	return;
 tlsched:
 	tasklet_schedule(&dev->tl);
-	
-
-	
 }
 
 static int enable_net_traffic(rtl8150_t * dev)
