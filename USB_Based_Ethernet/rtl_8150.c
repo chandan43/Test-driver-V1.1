@@ -283,6 +283,115 @@ static void unlink_all_urbs(rtl8150_t * dev)
 	usb_kill_urb(dev->intr_urb);
 }
 /**
+ *	netif_carrier_ok - test if carrier present
+ *	@dev: network device
+ *
+ * Check if carrier is present on device
+ */
+/**
+ * netif_device_detach - mark device as removed
+ * @dev: network device
+ *
+ * Mark device as removed from system and therefore no longer available.
+ */
+static void intr_callback(struct urb *urb)
+{
+	rtl8150_t *dev;
+	__u8 *d;
+	int status = urb->status;
+	int res;
+
+	dev = urb->context;
+	
+	if (!dev)
+		return;
+	switch (status) {
+	case 0:			/* success */
+		break;
+	case -ECONNRESET:	/* unlink */
+	case -ENOENT:
+	case -ESHUTDOWN:
+		return;
+	/* -EPIPE:  should clear the halt */
+	default:
+		dev_info(&urb->dev->dev, "%s: intr status %d\n",
+			 dev->netdev->name, status);
+		goto resubmit;
+	}
+	d = urb->transfer_buffer;
+	if (d[0] & TSR_ERRORS) {
+		dev->netdev->stats.tx_errors++;
+		if (d[INT_TSR] & (TSR_ECOL | TSR_JBR))
+			dev->netdev->stats.tx_aborted_errors++;
+		if (d[INT_TSR] & TSR_LCOL)
+			dev->netdev->stats.tx_window_errors++;
+		if (d[INT_TSR] & TSR_LOSS_CRS)
+			dev->netdev->stats.tx_carrier_errors++;	
+	}
+
+	/* Report link status changes to the network stack */
+	if ((d[INT_MSR] & MSR_LINK) == 0) {
+		if (netif_carrier_ok(dev->netdev)) {
+			netif_carrier_off(dev->netdev);
+			netdev_dbg(dev->netdev, "%s: LINK LOST\n", __func__);
+		}
+	} else {
+		if (!netif_carrier_ok(dev->netdev)) {
+			netif_carrier_on(dev->netdev);
+			netdev_dbg(dev->netdev, "%s: LINK CAME BACK\n", __func__);
+		}
+	}
+resubmit:
+	res = usb_submit_urb (urb, GFP_ATOMIC);
+	if (res == -ENODEV)
+		netif_device_detach(dev->netdev);
+	else if (res)
+		dev_err(&dev->udev->dev,
+			"can't resubmit intr, %s-%s/input0, status %d\n",
+			dev->udev->bus->bus_name, dev->udev->devpath, res);
+}
+
+static int rtl8150_suspend(struct usb_interface *intf, pm_message_t message)
+{
+	rtl8150_t *dev = usb_get_intfdata(intf);
+	netif_device_detach(dev->netdev);
+
+	if (netif_running(dev->netdev)) {
+		usb_kill_urb(dev->rx_urb);
+		usb_kill_urb(dev->intr_urb);
+	}
+	return 0;
+}
+/**
+ * netif_device_attach - mark device as attached
+ * @dev: network device
+ *
+ * Mark device as attached from system and restart if needed.
+ */
+static int rtl8150_resume(struct usb_interface *intf)
+{
+	rtl8150_t *dev = usb_get_intfdata(intf);
+
+	netif_device_attach(dev->netdev);
+	if (netif_running(dev->netdev)) {
+		dev->rx_urb->status = 0;
+		dev->rx_urb->actual_length = 0;
+		read_bulk_callback(dev->rx_urb);
+
+		dev->intr_urb->status = 0;
+		dev->intr_urb->actual_length = 0;
+		intr_callback(dev->intr_urb);
+	}
+	return 0;
+}
+
+/* -----------------------------------------------------------------
+*
+*	network related part of the code
+*
+* -----------------------------------------------------------------*/
+
+/**
  *	skb_reserve - adjust headroom
  *	@skb: buffer to alter
  *	@len: bytes to move
