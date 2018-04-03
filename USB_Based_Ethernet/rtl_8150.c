@@ -282,6 +282,158 @@ static void unlink_all_urbs(rtl8150_t * dev)
 	usb_kill_urb(dev->tx_urb);
 	usb_kill_urb(dev->intr_urb);
 }
+/*
+ * To use this rate limit feature of printk  we have to use the function 
+ * printk_ratelimit().  The function returns true as long as the limit of 
+ * number of messages printed does not excedd the limit set. Once the 
+ * limit exceeds the functions starts retuning "0" .
+*/
+/**
+ *	skb_put - add data to a buffer
+ *	@skb: buffer to use
+ *	@len: amount of data to add
+ *
+ *	This function extends the used data area of the buffer. If this would
+ *	exceed the total buffer size the kernel will panic. A pointer to the
+ *	first byte of the extra data is returned.
+ */
+/**
+ * eth_type_trans - determine the packet's protocol ID.
+ * @skb: received socket data
+ * @dev: receiving network device
+ *
+ * The rule here is that we
+ * assume 802.3 if the type field is short enough to be a length.
+ * This is normal practice and works for any 'now in use' protocol.
+ */
+/**
+ *	netif_rx	-	post buffer to the network code
+ *	@skb: buffer to post
+ *
+ *	This function receives a packet from a device driver and queues it for
+ *	the upper (protocol) levels to process.  It always succeeds. The buffer
+ *	may be dropped during processing for congestion control or by the
+ *	protocol layers.
+ *
+ *	return values:
+ *	NET_RX_SUCCESS	(no congestion)
+ *	NET_RX_DROP     (packet was dropped)
+ *
+ */
+static void read_bulk_callback(struct urb *urb)
+{
+	rtl8150_t *dev;
+	unsigned pkt_len, res;
+	struct sk_buff *skb;
+	struct net_device *netdev;
+	u16 rx_stat;
+	int status = urb->status;
+	int result;
+	
+	dev = urb->context;
+	if (!dev)
+		return;
+	if (test_bit(RTL8150_UNPLUG, &dev->flags))
+		return;
+	netdev = dev->netdev;
+	if (!netif_device_present(netdev))
+		return;
+	switch (status) {
+		case 0:
+			break;
+		case -ENOENT:
+			return;	/* the urb is in unlink state */
+		case -ETIME:
+			if (printk_ratelimit())
+				dev_warn(&urb->dev->dev, "may be reset is needed?..\n");
+			goto goon;
+		default:
+			if (printk_ratelimit())
+				dev_warn(&urb->dev->dev, "Rx status %d\n", status);
+			goto goon;
+	}
+	if (!dev->rx_skb)
+		goto resched;
+	/* protect against short packets (tell me why we got some?!?) */
+	if (urb->actual_length < 4)
+		goto goon;
+	res = urb->actual_length;
+	rx_stat = le16_to_cpu(*(__le16 *)(urb->transfer_buffer + res - 4));
+	pkt_len = res - 4;
+	
+	skb_put(dev->rx_skb, pkt_len);
+	dev->rx_skb->protocol = eth_type_trans(dev->rx_skb, netdev);
+	netif_rx(dev->rx_skb);
+
+	netdev->stats.rx_packets++;
+	netdev->stats.rx_bytes += pkt_len;
+	spin_lock(&dev->rx_pool_lock);
+	skb = pull_skb(dev); //TODO:
+	spin_unlock(&dev->rx_pool_lock);
+	if (!skb)
+		goto resched;
+	
+	dev->rx_skb = skb;
+goon:
+	usb_fill_bulk_urb(dev->rx_urb, dev->udev, usb_rcvbulkpipe(dev->udev, 1),
+		      dev->rx_skb->data, RTL8150_MTU, read_bulk_callback, dev);	
+	result = usb_submit_urb(dev->rx_urb, GFP_ATOMIC);
+	if (result == -ENODEV)
+		netif_device_detach(dev->netdev);
+	else if (result) {
+		set_bit(RX_URB_FAIL, &dev->flags);
+		goto resched;
+	} else {
+		clear_bit(RX_URB_FAIL, &dev->flags);
+	}
+
+	return;
+resched:
+	tasklet_schedule(&dev->tl);	
+}
+/*
+ * It is not allowed to call kfree_skb() or consume_skb() from hardware
+ * interrupt context or with hardware interrupts being disabled.
+ * (in_irq() || irqs_disabled())
+ *
+ * We provide four helpers that can be used in following contexts :
+ *
+ * dev_kfree_skb_irq(skb) when caller drops a packet from irq context,
+ *  replacing kfree_skb(skb)
+ *
+ * dev_consume_skb_irq(skb) when caller consumes a packet from irq context.
+ *  Typically used in place of consume_skb(skb) in TX completion path
+ *
+ * dev_kfree_skb_any(skb) when caller doesn't know its current irq context,
+ *  replacing kfree_skb(skb)
+ *
+ * dev_consume_skb_any(skb) when caller doesn't know its current irq context,
+ *  and consumed a packet. Used in place of consume_skb(skb)
+ */
+/**
+ *	netif_wake_queue - restart transmit
+ *	@dev: network device
+ *
+ *	Allow upper layers to call the device hard_start_xmit routine.
+ *	Used for flow control when transmit resources are available.
+ */
+static void write_bulk_callback(struct urb *urb)
+{
+	rtl8150_t *dev;
+	int status = urb->status;
+
+	dev = urb->context;
+	if (!dev)
+		return;
+	dev_kfree_skb_irq(dev->tx_skb); //interupt context
+	if (!netif_device_present(dev->netdev))
+		return;
+	if (status)
+		dev_info(&urb->dev->dev, "%s: Tx status %d\n",
+				dev->netdev->name, status);
+	netif_trans_update(dev->netdev);
+	netif_wake_queue(dev->netdev);
+}
 /**
  *	netif_carrier_ok - test if carrier present
  *	@dev: network device
