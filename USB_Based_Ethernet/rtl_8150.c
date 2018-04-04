@@ -117,7 +117,7 @@ enum PRODUCT_ID {
 	PRODUCT_ID_LCS8138TX	= 0x401a,
 	PRODUCT_ID_SP128AR	= 0x0003,
 	PRODUCT_ID_PRESTIGE 	= 0x401a,
-}
+};
 static char driver_name [] = "rtl8150";
 
 /* table of devices that work with this driver */
@@ -227,7 +227,119 @@ static int set_registers(rtl8150_t *dev, u16 indx, u16 size, const void *data)
 			      indx, 0, buf, size, 500);
 	kfree(buf);
 	return ret;		
-} 
+}
+
+static void async_set_reg_cb(struct urb *urb)
+{
+	struct async_req *req = (struct async_req *)urb->context;
+	int status = urb->status;
+
+	if (status < 0)
+		dev_dbg(&urb->dev->dev, "%s failed with %d", __func__, status);
+	kfree(req);
+	usb_free_urb(urb);
+}
+
+/**
+ * usb_alloc_urb - creates a new urb for a USB driver to use
+ * @iso_packets: number of iso packets for this urb
+ * @mem_flags: the type of memory to allocate, see kmalloc() for a list of
+ *	valid options for this.
+ *
+ * Creates an urb for the USB driver to use, initializes a few internal
+ * structures, increments the usage counter, and returns a pointer to it.
+ *
+ * If the driver want to use this urb for interrupt, control, or bulk
+ * endpoints, pass '0' as the number of iso packets.
+ *
+ * The driver must call usb_free_urb() when it is finished with the urb.
+ *
+ * Return: A pointer to the new urb, or %NULL if no memory is available.
+ */
+static int async_set_registers(rtl8150_t *dev, u16 indx, u16 size, u16 reg)
+{
+	int res = -ENOMEM;
+	struct urb *async_urb;
+	struct async_req *req;
+
+	req = kmalloc(sizeof(struct async_req), GFP_ATOMIC);
+	if (req == NULL)
+		return res;
+	async_urb = usb_alloc_urb(0, GFP_ATOMIC);
+	if (async_urb == NULL) {
+		kfree(req);
+		return res;
+	}
+	req->rx_creg = cpu_to_le16(reg);
+	req->dr.bRequestType = RTL8150_REQT_WRITE;
+	req->dr.bRequest = RTL8150_REQ_SET_REGS;
+	req->dr.wIndex = 0;
+	req->dr.wValue = cpu_to_le16(indx);
+	req->dr.wLength = cpu_to_le16(size);
+	usb_fill_control_urb(async_urb, dev->udev,
+	                     usb_sndctrlpipe(dev->udev, 0), (void *)&req->dr,
+			     &req->rx_creg, size, async_set_reg_cb, req);
+	res = usb_submit_urb(async_urb, GFP_ATOMIC);
+	if (res) {
+		if (res == -ENODEV)
+			netif_device_detach(dev->netdev);
+		dev_err(&dev->udev->dev, "%s failed with %d\n", __func__, res);
+	}
+	return res;	
+}
+
+static int read_mii_word(rtl8150_t * dev, u8 phy, __u8 indx, u16 * reg)
+{
+	int i;
+	u8 data[3], tmp;
+	
+	data[0] = phy;
+	data[1] = data[2] = 0;
+	tmp = indx | PHY_READ | PHY_GO;
+	i = 0;
+	
+	set_registers(dev, PHYADD, sizeof(data), data);
+	set_registers(dev, PHYCNT, 1, &tmp);
+	do {
+		get_registers(dev, PHYCNT, 1, data);
+	} while ((data[0] & PHY_GO) && (i++ < MII_TIMEOUT));
+	
+	if (i <= MII_TIMEOUT) {
+		get_registers(dev, PHYDAT, 2, data);
+		*reg = data[0] | (data[1] << 8);
+		return 0;
+	} else
+		return 1;	
+}
+
+static int write_mii_word(rtl8150_t * dev, u8 phy, __u8 indx, u16 reg)
+{
+	int i;
+	u8 data[3], tmp;
+
+	data[0] = phy;
+	data[1] = reg & 0xff; //MSB
+	data[2] = (reg >> 8) & 0xff; //LSB
+	tmp = indx | PHY_WRITE | PHY_GO;
+	i = 0;
+	set_registers(dev, PHYADD, sizeof(data), data);
+	set_registers(dev, PHYCNT, 1, &tmp);
+	
+	do {
+		get_registers(dev, PHYCNT, 1, data);
+	} while ((data[0] & PHY_GO) && (i++ < MII_TIMEOUT));
+	if (i <= MII_TIMEOUT)
+		return 0;
+	else
+		return 1;
+}
+ 
+static inline void set_ethernet_addr(rtl8150_t *dev)
+{
+	u8 node_id[6];
+	get_registers(dev, IDR, sizeof(node_id), node_id);
+	memcpy(dev->netdev->dev_addr, node_id, sizeof(node_id));
+}
 
 
 static int rtl8150_set_mac_address(struct net_device *netdev, void *p)
@@ -828,7 +940,7 @@ static netdev_tx_t rtl8150_start_xmit(struct sk_buff *skb,
 static void set_carrier(struct net_device *netdev)
 {
 	rtl8150_t *dev = netdev_priv(netdev);
-	short tmpe
+	short tmp;
 	
 	get_registers(dev, CSCR, 2, &tmp);
 	if (tmp & CSCR_LINK_STATUS)
@@ -989,7 +1101,7 @@ static int rtl8150_get_link_ksettings(struct net_device *netdev,
 	ecmd->base.phy_address = dev->phy;
 
 	get_registers(dev, BMCR, 2, &bmcr);
-	i, ANLP, 2, &lpa);
+	get_registers(dev, ANLP, 2, &lpa);
 
 	if (bmcr & BMCR_ANENABLE) {
 		u32 speed = ((lpa & (LPA_100HALF | LPA_100FULL)) ?
