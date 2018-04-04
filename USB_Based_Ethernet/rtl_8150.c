@@ -229,6 +229,56 @@ static int set_registers(rtl8150_t *dev, u16 indx, u16 size, const void *data)
 	return ret;		
 } 
 
+
+static int rtl8150_set_mac_address(struct net_device *netdev, void *p)
+{
+	struct sockaddr *addr = p;
+	rtl8150_t *dev = netdev_priv(netdev);
+
+	if (netif_running(netdev))
+		return -EBUSY;
+	memcpy(netdev->dev_addr, addr->sa_data, netdev->addr_len);
+	netdev_dbg(netdev, "Setting MAC address to %pM\n", netdev->dev_addr);
+	/* Set the IDR registers. */
+	set_registers(dev, IDR, netdev->addr_len, netdev->dev_addr);
+#ifdef EEPROM_WRITE
+	{
+	int i;
+	u8 cr;
+	/* Get the CR contents. */
+	get_registers(dev, CR, 1, &cr);	
+	/* Set the WEPROM bit (eeprom write enable). */
+	cr |= 0x20;
+	set_registers(dev, CR, 1, &cr);
+	/* Write the MAC address into eeprom. Eeprom writes must be word-sized,
+	   so we need to split them up. */
+	for (i = 0; i * 2 < netdev->addr_len; i++) {
+		set_registers(dev, IDR_EEPROM + (i * 2), 2,
+		netdev->dev_addr + (i * 2));
+	}
+	/* Clear the WEPROM bit (preventing accidental eeprom writes). */
+	cr &= 0xdf;
+	set_registers(dev, CR, 1, &cr);
+	}
+#endif
+	return 0;		
+}
+
+/* -----------------------------------------------------------------
+ * Device Reset function
+ * -----------------------------------------------------------------*/
+static int rtl8150_reset(rtl8150_t * dev)
+{
+	u8 data = 0x10;
+	int i = HZ;
+	set_registers(dev, CR, 1, &data);
+	do {
+		get_registers(dev, CR, 1, &data);
+	} while ((data & 0x10) && --i);
+	
+	return (i > 0) ? 1 : 0;
+}
+
 /* -----------------------------------------------------------------
  * URB : Communication with usb devices  
  * -----------------------------------------------------------------*/
@@ -282,6 +332,22 @@ static void unlink_all_urbs(rtl8150_t * dev)
 	usb_kill_urb(dev->tx_urb);
 	usb_kill_urb(dev->intr_urb);
 }
+
+static inline struct sk_buff *pull_skb(rtl8150_t *dev)
+{
+	struct sk_buff *skb;
+	int i;
+
+	for (i = 0; i < RX_SKB_POOL_SIZE; i++) {
+		if (dev->rx_skb_pool[i]) {
+			skb = dev->rx_skb_pool[i];
+			dev->rx_skb_pool[i] = NULL;
+			return skb;
+		}
+	}
+	return NULL;
+}
+
 /*
  * To use this rate limit feature of printk  we have to use the function 
  * printk_ratelimit().  The function returns true as long as the limit of 
